@@ -143,26 +143,26 @@ Feel free to modify the format for your data to improve the performance.
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 22626 bytes (ratio = 8.14638:1) (5.43024 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.674 msec. Decompresed in 0.804 msec
+    Zdepth Speed: Compressed in 1.674 msec. Decompressed in 0.804 msec
 
     Quantization+RVL Compression: 184320 bytes -> 40312 bytes (ratio = 4.57234:1) (9.67488 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.379 msec. Decompresed in 0.493 msec
+    Quantization+RVL Speed: Compressed in 0.379 msec. Decompressed in 0.493 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 29460 bytes (ratio = 6.25662:1) (7.0704 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.609 msec. Decompresed in 0.592 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.609 msec. Decompressed in 0.592 msec
 
     ===================================================================
     + Test: Frame 1 Keyframe=false compression
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 18703 bytes (ratio = 9.8551:1) (4.48872 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.471 msec. Decompresed in 0.679 msec
+    Zdepth Speed: Compressed in 1.471 msec. Decompressed in 0.679 msec
 
     Quantization+RVL Compression: 184320 bytes -> 40188 bytes (ratio = 4.58644:1) (9.64512 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.446 msec. Decompresed in 0.491 msec
+    Quantization+RVL Speed: Compressed in 0.446 msec. Decompressed in 0.491 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 29291 bytes (ratio = 6.29272:1) (7.02984 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.683 msec. Decompresed in 0.593 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.683 msec. Decompressed in 0.593 msec
 
     -------------------------------------------------------------------
     Test vector: Ceiling
@@ -175,26 +175,26 @@ Feel free to modify the format for your data to improve the performance.
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 16499 bytes (ratio = 11.1716:1) (3.95976 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.463 msec. Decompresed in 0.845 msec
+    Zdepth Speed: Compressed in 1.463 msec. Decompressed in 0.845 msec
 
     Quantization+RVL Compression: 184320 bytes -> 42084 bytes (ratio = 4.37981:1) (10.1002 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.376 msec. Decompresed in 0.461 msec
+    Quantization+RVL Speed: Compressed in 0.376 msec. Decompressed in 0.461 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 23251 bytes (ratio = 7.9274:1) (5.58024 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.69 msec. Decompresed in 0.583 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.69 msec. Decompressed in 0.583 msec
 
     ===================================================================
     + Test: Frame 1 Keyframe=false compression
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 15495 bytes (ratio = 11.8955:1) (3.7188 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.447 msec. Decompresed in 0.667 msec
+    Zdepth Speed: Compressed in 1.447 msec. Decompressed in 0.667 msec
 
     Quantization+RVL Compression: 184320 bytes -> 41948 bytes (ratio = 4.39401:1) (10.0675 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.374 msec. Decompresed in 0.465 msec
+    Quantization+RVL Speed: Compressed in 0.374 msec. Decompressed in 0.465 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 23143 bytes (ratio = 7.9644:1) (5.55432 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.658 msec. Decompresed in 0.586 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.658 msec. Decompressed in 0.586 msec
 
     -------------------------------------------------------------------
     Test vector: Person
@@ -207,26 +207,26 @@ Feel free to modify the format for your data to improve the performance.
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 23665 bytes (ratio = 7.78872:1) (5.6796 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.442 msec. Decompresed in 0.69 msec
+    Zdepth Speed: Compressed in 1.442 msec. Decompressed in 0.69 msec
 
     Quantization+RVL Compression: 184320 bytes -> 45016 bytes (ratio = 4.09454:1) (10.8038 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.422 msec. Decompresed in 0.506 msec
+    Quantization+RVL Speed: Compressed in 0.422 msec. Decompressed in 0.506 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 33524 bytes (ratio = 5.49815:1) (8.04576 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.67 msec. Decompresed in 0.61 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.67 msec. Decompressed in 0.61 msec
 
     ===================================================================
     + Test: Frame 1 Keyframe=false compression
     ===================================================================
 
     Zdepth Compression: 184320 bytes -> 19848 bytes (ratio = 9.28658:1) (4.76352 Mbps @ 30 FPS)
-    Zdepth Speed: Compressed in 1.514 msec. Decompresed in 0.718 msec
+    Zdepth Speed: Compressed in 1.514 msec. Decompressed in 0.718 msec
 
     Quantization+RVL Compression: 184320 bytes -> 45120 bytes (ratio = 4.08511:1) (10.8288 Mbps @ 30 FPS)
-    Quantization+RVL Speed: Compressed in 0.4 msec. Decompresed in 0.514 msec
+    Quantization+RVL Speed: Compressed in 0.4 msec. Decompressed in 0.514 msec
 
     Quantization+RVL+Zstd Compression: 184320 bytes -> 33667 bytes (ratio = 5.4748:1) (8.08008 Mbps @ 30 FPS)
-    Quantization+RVL+Zstd Speed: Compressed in 0.642 msec. Decompresed in 0.619 msec
+    Quantization+RVL+Zstd Speed: Compressed in 0.642 msec. Decompressed in 0.619 msec
 
 
 #### Credits
