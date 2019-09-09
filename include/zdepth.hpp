@@ -326,11 +326,12 @@ protected:
     // Block descriptors
     std::vector<uint8_t> Blocks;
 
-    // Results of FSE compression
     int ZeroRuns_UncompressedBytes = 0;
     int Surfaces_UncompressedBytes = 0;
     int Blocks_UncompressedBytes = 0;
     int Edges_UncompressedBytes = 0;
+
+    // Results of zstd compression
     std::vector<uint8_t> ZeroRunsOut, SurfacesOut, BlocksOut, EdgesOut;
 
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
