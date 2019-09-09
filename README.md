@@ -25,7 +25,9 @@ The predictors are similar to the way the PNG format works.
 
 For streaming depth compression, I believe this is currently the best open-source option available online.
 
-It runs in 1-2 milliseconds and produces compressed lossless depth video at 4-5 Mbps.
+It runs in 1-2 milliseconds and produces compressed lossless depth video at 4-5 Mbps.  This is similar to the bandwidth needed for HD video (1080p@30FPS).
+
+Detailed benchmarks and test vectors available at the end of the document.
 
 
 ## Applications
@@ -56,15 +58,27 @@ Azure Kinect DK, I recommend looking at Intel's Open3D library, which supports
 also has a capture plugin for single cameras.
 
 
-## API
+## Building and Using
+
+There's example usage in the `tests` folder.
+
+This project provides a CMakeLists.txt that generates a `zdepth` target.
+
+Link to the target and include the header:
+
+    #include "zdepth.hpp"
 
 Compress 16-bit depth image to vector of bytes:
 
     zdepth::DepthCompressor compressor;
 
+    ...
+
     std::vector<uint8_t> compressed;
     const bool is_keyframe = true;
     compressor.Compress(Width, Height, frame, compressed, is_keyframe);
+
+Re-use the same DepthCompressor object for multiple frames for best performance.
 
 Setting `is_keyframe = false` will use ~10% less bandwidth (e.g. 4 Mbps instead of 5 Mbps)
 but has limitations just like normal video: You must guarantee delivery of all the frames
@@ -80,6 +94,8 @@ Decompress vector of bytes back to 16-bit depth image:
     if (result != zdepth::DepthResult::Success) {
         // Handle input error
     }
+
+You must use different objects for the compressor and decompressor, or it will fail to decode.
 
 
 ## File Format
