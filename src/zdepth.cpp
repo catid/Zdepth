@@ -4,6 +4,9 @@
 
 #include <zstd.h> // Zstd
 
+#include <iostream>
+using namespace std;
+
 namespace zdepth {
 
 
@@ -643,6 +646,11 @@ DepthResult DepthCompressor::Decompress(
     const uint8_t* EdgesData = BlocksData + BlocksCompressedBytes;
     const uint8_t* SurfacesData = EdgesData + EdgesCompressedBytes;
 
+    cout << "ZeroesCompressedBytes: " << ZeroesCompressedBytes << endl;
+    cout << "BlocksCompressedBytes: " << BlocksCompressedBytes << endl;
+    cout << "EdgesCompressedBytes: " << EdgesCompressedBytes << endl;
+    cout << "SurfacesCompressedBytes: " << SurfacesCompressedBytes << endl;
+
     bool success = ZstdDecompress(
         ZeroesData,
         ZeroesCompressedBytes,
@@ -823,17 +831,22 @@ void DepthCompressor::EncodeZeroes(
     const int bytes = width * height / 8;
     Zeroes.resize(bytes);
 
+    unsigned prev = 0;
     for (int i = 0; i < bytes; ++i, depth += 8)
     {
-        uint8_t bits = 0;
+        unsigned bits = 0;
         for (int j = 0; j < 8; ++j) {
-            if (depth[j]) {
-                bits |= 1 << j;
-            }
+            const unsigned x = depth[j] ? 1 : 0;
+            bits |= (x ^ prev) << j;
+            prev = x;
         }
 
-        Zeroes[i] = bits;
+        Zeroes[i] = static_cast<uint8_t>( bits );
+
+        cout << bits << " ";
     }
+    cout << endl;
+    cout << endl;
 }
 
 void DepthCompressor::DecodeZeroes(
@@ -843,12 +856,15 @@ void DepthCompressor::DecodeZeroes(
 {
     const int bytes = width * height / 8;
 
+    unsigned prev = 0;
     for (int i = 0; i < bytes; ++i, depth += 8)
     {
-        const uint8_t bits = Zeroes[i];
+        const unsigned bits = Zeroes[i];
 
         for (int j = 0; j < 8; ++j) {
-            depth[j] = bits & (1 << j);
+            unsigned x_xor_prev = (bits >> j) & 1;
+            prev ^= x_xor_prev;
+            depth[j] = static_cast<uint16_t>( prev );
         }
     }
 }
