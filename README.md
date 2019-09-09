@@ -120,7 +120,7 @@ Feel free to modify the format for your data to improve the performance.
     Test vector: Room
     -------------------------------------------------------------------
 
-    ![Room Image](tests/room.jpg?raw=true "Room Image")
+![Room Image](tests/room.jpg?raw=true "Room Image")
 
     ===================================================================
     + Test: Frame 0 Keyframe=true compression
@@ -152,7 +152,7 @@ Feel free to modify the format for your data to improve the performance.
     Test vector: Ceiling
     -------------------------------------------------------------------
 
-    ![Ceiling Image](tests/ceiling.jpg?raw=true "Ceiling Image")
+![Ceiling Image](tests/ceiling.jpg?raw=true "Ceiling Image")
 
     ===================================================================
     + Test: Frame 0 Keyframe=true compression
@@ -184,7 +184,7 @@ Feel free to modify the format for your data to improve the performance.
     Test vector: Person
     -------------------------------------------------------------------
 
-    ![Person Image](tests/person.jpg?raw=true "Person Image")
+![Person Image](tests/person.jpg?raw=true "Person Image")
 
     ===================================================================
     + Test: Frame 0 Keyframe=true compression
