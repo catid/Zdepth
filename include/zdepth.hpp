@@ -122,24 +122,10 @@ DEPTH_INLINE uint32_t ReadU32_LE(const void* data)
 #endif
 }
 
-// Little-endian 64-bit read
-DEPTH_INLINE uint64_t ReadU64_LE(const void* data)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
-    return ((uint64_t)u8p[7] << 56) | ((uint64_t)u8p[6] << 48) | ((uint64_t)u8p[5] << 40) |
-           ((uint64_t)u8p[4] << 32) | ((uint64_t)u8p[3] << 24) | ((uint64_t)u8p[2] << 16) |
-           ((uint64_t)u8p[1] << 8) | u8p[0];
-#else
-    const uint64_t* word_ptr = reinterpret_cast<const uint64_t*>(data);
-    return *word_ptr;
-#endif
-}
-
 // Little-endian 16-bit write
 DEPTH_INLINE void WriteU16_LE(void* data, uint16_t value)
 {
-#ifdef CORE_ALIGNED_ACCESSES
+#ifdef DEPTH_ALIGNED_ACCESSES
     uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
     u8p[1] = static_cast<uint8_t>(value >> 8);
     u8p[0] = static_cast<uint8_t>(value);
@@ -160,25 +146,6 @@ DEPTH_INLINE void WriteU32_LE(void* data, uint32_t value)
     u8p[0] = static_cast<uint8_t>(value);
 #else
     uint32_t* word_ptr = reinterpret_cast<uint32_t*>(data);
-    *word_ptr = value;
-#endif
-}
-
-// Little-endian 64-bit write
-DEPTH_INLINE void WriteU64_LE(void* data, uint64_t value)
-{
-#ifdef CORE_ALIGNED_ACCESSES
-    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
-    u8p[7] = static_cast<uint8_t>(value >> 56);
-    u8p[6] = static_cast<uint8_t>(value >> 48);
-    u8p[5] = static_cast<uint8_t>(value >> 40);
-    u8p[4] = static_cast<uint8_t>(value >> 32);
-    u8p[3] = static_cast<uint8_t>(value >> 24);
-    u8p[2] = static_cast<uint8_t>(value >> 16);
-    u8p[1] = static_cast<uint8_t>(value >> 8);
-    u8p[0] = static_cast<uint8_t>(value);
-#else
-    uint64_t* word_ptr = reinterpret_cast<uint64_t*>(data);
     *word_ptr = value;
 #endif
 }
