@@ -108,8 +108,8 @@ You must use different objects for the compressor and decompressor, or it will f
     2: <Frame Number (2 bytes)>
     4: <Width (2 bytes)>
     6: <Height (2 bytes)>
-    8: <ZeroRuns Uncompressed Bytes (4 bytes)>
-    12: <ZeroRuns Compressed Bytes (4 bytes)>
+    8: <Zeroes Uncompressed Bytes (4 bytes)>
+    12: <Zeroes Compressed Bytes (4 bytes)>
     16: <Blocks Uncompressed Bytes (4 bytes)>
     20: <Blocks Compressed Bytes (4 bytes)>
     24: <Edges Uncompressed Bytes (4 bytes)>
@@ -117,7 +117,7 @@ You must use different objects for the compressor and decompressor, or it will f
     32: <Surfaces Uncompressed Bytes (4 bytes)>
     36: <Surfaces Compressed Bytes (4 bytes)>
 
-    Followed by compressed ZeroRuns, then Blocks, then Edges, then Surfaces.
+    Followed by compressed Zeroes, then Blocks, then Edges, then Surfaces.
 
     The compressed and uncompressed sizes are of packed data for Zstd.
 

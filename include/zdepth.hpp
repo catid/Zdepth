@@ -64,8 +64,8 @@ static const int kDepthHeaderBytes = 40;
     2: <Frame Number (2 bytes)>
     4: <Width (2 bytes)>
     6: <Height (2 bytes)>
-    8: <ZeroRuns Uncompressed Bytes (4 bytes)>
-    12: <ZeroRuns Compressed Bytes (4 bytes)>
+    8: <Zeroes Uncompressed Bytes (4 bytes)>
+    12: <Zeroes Compressed Bytes (4 bytes)>
     16: <Blocks Uncompressed Bytes (4 bytes)>
     20: <Blocks Compressed Bytes (4 bytes)>
     24: <Edges Uncompressed Bytes (4 bytes)>
@@ -73,7 +73,7 @@ static const int kDepthHeaderBytes = 40;
     32: <Surfaces Uncompressed Bytes (4 bytes)>
     36: <Surfaces Compressed Bytes (4 bytes)>
 
-    Followed by compressed ZeroRuns, then Blocks, then Edges, then Surfaces.
+    Followed by compressed Zeroes, then Blocks, then Edges, then Surfaces.
 
     The compressed and uncompressed sizes are of packed data for Zstd.
 
@@ -288,18 +288,18 @@ protected:
     unsigned CompressedFrameNumber = 0;
 
     // Accumulated through the end of the filtering then compressed separately
-    std::vector<uint16_t> ZeroRuns, Edges, Surfaces;
+    std::vector<uint16_t> Edges, Surfaces;
 
     // Block descriptors
-    std::vector<uint8_t> Blocks;
+    std::vector<uint8_t> Zeroes, Blocks;
 
-    int ZeroRuns_UncompressedBytes = 0;
+    int Zeroes_UncompressedBytes = 0;
     int Surfaces_UncompressedBytes = 0;
     int Blocks_UncompressedBytes = 0;
     int Edges_UncompressedBytes = 0;
 
     // Results of zstd compression
-    std::vector<uint8_t> ZeroRunsOut, SurfacesOut, BlocksOut, EdgesOut;
+    std::vector<uint8_t> ZeroesOut, SurfacesOut, BlocksOut, EdgesOut;
 
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
     std::vector<uint8_t> Packed;
@@ -322,14 +322,14 @@ protected:
         bool keyframe,
         std::vector<uint8_t>& compressed);
 
-    void RunLengthEncodeZeroes(
+    void EncodeZeroes(
         int width,
         int height,
         const uint16_t* depth);
 
     // This writes the whole QuantizedDepth image with 0 or 1
     // before the block decoding starts.
-    bool RunLengthDecodeZeroes(
+    void DecodeZeroes(
         int width,
         int height,
         uint16_t* depth);

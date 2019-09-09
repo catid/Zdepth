@@ -359,7 +359,7 @@ void DepthCompressor::Compress(
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
     }
 
-    RunLengthEncodeZeroes(width, height, depth);
+    EncodeZeroes(width, height, depth);
 
     CompressImage(width, height, depth, prev_depth);
 
@@ -375,10 +375,8 @@ void DepthCompressor::Compress(
     Edges_UncompressedBytes = static_cast<unsigned>( Packed.size() );
     ZstdCompress(Packed, EdgesOut);
 
-    Pad12(ZeroRuns);
-    Pack12(ZeroRuns, Packed);
-    ZeroRuns_UncompressedBytes = static_cast<unsigned>( Packed.size() );
-    ZstdCompress(Packed, ZeroRunsOut);
+    Zeroes_UncompressedBytes = static_cast<unsigned>( Zeroes.size() );
+    ZstdCompress(Zeroes, ZeroesOut);
 
     Blocks_UncompressedBytes = static_cast<unsigned>( Blocks.size() );
     ZstdCompress(Blocks, BlocksOut);
@@ -539,7 +537,7 @@ void DepthCompressor::WriteCompressedFile(
 {
     compressed.resize(
         kDepthHeaderBytes +
-        ZeroRunsOut.size() +
+        ZeroesOut.size() +
         SurfacesOut.size() +
         BlocksOut.size() +
         EdgesOut.size());
@@ -557,8 +555,8 @@ void DepthCompressor::WriteCompressedFile(
     WriteU16_LE(copy_dest + 2, static_cast<uint16_t>( CompressedFrameNumber ));
     WriteU16_LE(copy_dest + 4, static_cast<uint16_t>( width ));
     WriteU16_LE(copy_dest + 6, static_cast<uint16_t>( height ));
-    WriteU32_LE(copy_dest + 8, ZeroRuns_UncompressedBytes);
-    WriteU32_LE(copy_dest + 12, static_cast<uint32_t>( ZeroRunsOut.size() ));
+    WriteU32_LE(copy_dest + 8, Zeroes_UncompressedBytes);
+    WriteU32_LE(copy_dest + 12, static_cast<uint32_t>( ZeroesOut.size() ));
     WriteU32_LE(copy_dest + 16, Blocks_UncompressedBytes);
     WriteU32_LE(copy_dest + 20, static_cast<uint32_t>( BlocksOut.size() ));
     WriteU32_LE(copy_dest + 24, Edges_UncompressedBytes);
@@ -568,8 +566,8 @@ void DepthCompressor::WriteCompressedFile(
     copy_dest += kDepthHeaderBytes;
 
     // Concatenate the compressed data
-    memcpy(copy_dest, ZeroRunsOut.data(), ZeroRunsOut.size());
-    copy_dest += ZeroRunsOut.size();
+    memcpy(copy_dest, ZeroesOut.data(), ZeroesOut.size());
+    copy_dest += ZeroesOut.size();
     memcpy(copy_dest, BlocksOut.data(), BlocksOut.size());
     copy_dest += BlocksOut.size();
     memcpy(copy_dest, EdgesOut.data(), EdgesOut.size());
@@ -617,8 +615,8 @@ DepthResult DepthCompressor::Decompress(
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
     }
 
-    ZeroRuns_UncompressedBytes = ReadU32_LE(src + 8);
-    const unsigned ZeroRunsCompressedBytes = ReadU32_LE(src + 12);
+    Zeroes_UncompressedBytes = ReadU32_LE(src + 8);
+    const unsigned ZeroesCompressedBytes = ReadU32_LE(src + 12);
     Blocks_UncompressedBytes = ReadU32_LE(src + 16);
     const unsigned BlocksCompressedBytes = ReadU32_LE(src + 20);
     Edges_UncompressedBytes = ReadU32_LE(src + 24);
@@ -632,7 +630,7 @@ DepthResult DepthCompressor::Decompress(
 
     if (compressed.size() !=
         kDepthHeaderBytes +
-        ZeroRunsCompressedBytes +
+        ZeroesCompressedBytes +
         BlocksCompressedBytes +
         EdgesCompressedBytes +
         SurfacesCompressedBytes)
@@ -640,20 +638,19 @@ DepthResult DepthCompressor::Decompress(
         return DepthResult::FileTruncated;
     }
 
-    const uint8_t* ZeroRunsData = src + kDepthHeaderBytes;
-    const uint8_t* BlocksData = ZeroRunsData + ZeroRunsCompressedBytes;
+    const uint8_t* ZeroesData = src + kDepthHeaderBytes;
+    const uint8_t* BlocksData = ZeroesData + ZeroesCompressedBytes;
     const uint8_t* EdgesData = BlocksData + BlocksCompressedBytes;
     const uint8_t* SurfacesData = EdgesData + EdgesCompressedBytes;
 
     bool success = ZstdDecompress(
-        ZeroRunsData,
-        ZeroRunsCompressedBytes,
-        ZeroRuns_UncompressedBytes,
-        Packed);
+        ZeroesData,
+        ZeroesCompressedBytes,
+        Zeroes_UncompressedBytes,
+        Zeroes);
     if (!success) {
         return DepthResult::Corrupted;
     }
-    Unpack12(Packed, ZeroRuns);
 
     success = ZstdDecompress(
         EdgesData,
@@ -684,10 +681,10 @@ DepthResult DepthCompressor::Decompress(
         return DepthResult::Corrupted;
     }
 
-    success = RunLengthDecodeZeroes(width, height, depth);
-    if (!success) {
+    if (Zeroes.size() != n / 8) {
         return DepthResult::Corrupted;
     }
+    DecodeZeroes(width, height, depth);
 
     success = DecompressImage(width, height, depth, prev_depth);
     if (!success) {
@@ -818,96 +815,42 @@ bool DepthCompressor::DecompressImage(
     return true;
 }
 
-static void Encode4095(std::vector<uint16_t>& data, unsigned value)
-{
-    // We can only write 12 bits at a time, so split it up:
-    while (value > 4095) {
-        data.push_back(4095);
-        data.push_back(0);
-        value -= 4095;
-    }
-    data.push_back(static_cast<uint16_t>( value ));
-}
-
-void DepthCompressor::RunLengthEncodeZeroes(
+void DepthCompressor::EncodeZeroes(
     int width,
     int height,
     const uint16_t* depth)
 {
-    const int n = width * height;
+    const int bytes = width * height / 8;
+    Zeroes.resize(bytes);
 
-    unsigned ZeroRunCount = 0, NonZeroRunCount = 0;
-    ZeroRuns.clear();
-
-    for (int i = 0; i < n; ++i) {
-        if (depth[i]) {
-            if (ZeroRunCount > 0) {
-                Encode4095(ZeroRuns, ZeroRunCount);
-                ZeroRunCount = 0;
+    for (int i = 0; i < bytes; ++i, depth += 8)
+    {
+        uint8_t bits = 0;
+        for (int j = 0; j < 8; ++j) {
+            if (depth[j]) {
+                bits |= 1 << j;
             }
-            ++NonZeroRunCount;
-        } else {
-            if (NonZeroRunCount > 0) {
-                Encode4095(ZeroRuns, NonZeroRunCount);
-                NonZeroRunCount = 0;
-            }
-            ++ZeroRunCount;
         }
-    }
 
-    if (ZeroRunCount > 0) {
-        Encode4095(ZeroRuns, ZeroRunCount);
-        ZeroRuns.push_back(static_cast<uint16_t>( ZeroRunCount ));
-    }
-    else if (NonZeroRunCount > 0) {
-        Encode4095(ZeroRuns, NonZeroRunCount);
+        Zeroes[i] = bits;
     }
 }
 
-bool DepthCompressor::RunLengthDecodeZeroes(
+void DepthCompressor::DecodeZeroes(
     int width,
     int height,
     uint16_t* depth)
 {
-    const int n = width * height;
-    const uint16_t* data = ZeroRuns.data();
-    const uint16_t* data_end = data + ZeroRuns.size();
-    uint16_t* depth_end = depth + n;
+    const int bytes = width * height / 8;
 
-    // Note: We need to terminate on depth_end rather than data_end
-    // because the data may be padded.
-    while (depth < depth_end)
+    for (int i = 0; i < bytes; ++i, depth += 8)
     {
-        // Zeroes:
+        const uint8_t bits = Zeroes[i];
 
-        if (data >= data_end) {
-            return false;
+        for (int j = 0; j < 8; ++j) {
+            depth[j] = bits & (1 << j);
         }
-        unsigned run = *data++;
-        if (depth + run > depth_end) {
-            return false;
-        }
-        memset(depth, 0, run * 2);
-        depth += run;
-
-        if (depth >= depth_end) {
-            break;
-        }
-
-        // Non-zeroes:
-
-        if (data >= data_end) {
-            return false;
-        }
-        run = *data++;
-        if (depth + run > depth_end) {
-            return false;
-        }
-        memset(depth, 1, run * 2);
-        depth += run;
     }
-
-    return true;
 }
 
 
