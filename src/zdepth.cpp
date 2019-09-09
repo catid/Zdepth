@@ -4,9 +4,6 @@
 
 #include <zstd.h> // Zstd
 
-#include <iostream>
-using namespace std;
-
 namespace zdepth {
 
 
@@ -646,11 +643,6 @@ DepthResult DepthCompressor::Decompress(
     const uint8_t* EdgesData = BlocksData + BlocksCompressedBytes;
     const uint8_t* SurfacesData = EdgesData + EdgesCompressedBytes;
 
-    cout << "ZeroesCompressedBytes: " << ZeroesCompressedBytes << endl;
-    cout << "BlocksCompressedBytes: " << BlocksCompressedBytes << endl;
-    cout << "EdgesCompressedBytes: " << EdgesCompressedBytes << endl;
-    cout << "SurfacesCompressedBytes: " << SurfacesCompressedBytes << endl;
-
     bool success = ZstdDecompress(
         ZeroesData,
         ZeroesCompressedBytes,
@@ -842,11 +834,7 @@ void DepthCompressor::EncodeZeroes(
         }
 
         Zeroes[i] = static_cast<uint8_t>( bits );
-
-        cout << bits << " ";
     }
-    cout << endl;
-    cout << endl;
 }
 
 void DepthCompressor::DecodeZeroes(
