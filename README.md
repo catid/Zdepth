@@ -244,7 +244,7 @@ Feel free to modify the format for your data to improve the performance.
 
 #### Credits
 
-Tonk uses the Zstd library (slightly modified).
+Zdepth uses the Zstd library (slightly modified).
 
 Inspired by prior work:
 + Microsoft Fast Lossless Depth Image Compression (RVL library) available [here](https://www.microsoft.com/en-us/research/publication/fast-lossless-depth-image-compression/)
