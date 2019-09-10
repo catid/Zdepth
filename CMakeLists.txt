@@ -83,7 +83,7 @@ target_link_libraries(zdepth_test PRIVATE zdepth)
 install(FILES LICENSE DESTINATION ".")
 install(FILES README.md DESTINATION ".")
 
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/ DESTINATION include)
 
 install(
     TARGETS
@@ -123,17 +123,18 @@ configure_package_config_file(
 
 install(
     FILES
-        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake
-        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfigVersion.cmake
+        ${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/ZdepthConfig.cmake
+        ${PROJECT_BINARY_DIR}/ZdepthConfigVersion.cmake
     DESTINATION
         "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
 )
 
 export(
-    EXPORT
-        zdepth-targets
+    TARGETS
+        zdepth
+        zstd
     FILE
-        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthTargets.cmake
+        "${PROJECT_BINARY_DIR}/ZdepthTargets.cmake"
     NAMESPACE
         zdepth::
 )
