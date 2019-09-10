@@ -72,7 +72,6 @@ target_include_directories(zdepth PUBLIC
 
 set_property(TARGET zdepth PROPERTY VERSION ${PROJECT_VERSION})
 set_property(TARGET zdepth PROPERTY SOVERSION ${PROJECT_VERSION_MAJOR})
-set_property(TARGET zdepth PROPERTY DEBUG_POSTFIX d)
 
 # zdepth test application
 
@@ -108,4 +107,36 @@ install(
         zdepth::
     DESTINATION
         "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
+)
+
+include(CMakePackageConfigHelpers)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfigVersion.cmake
+    VERSION
+        ${PROJECT_VERSION}
+    COMPATIBILITY
+        AnyNewerVersion
+)
+configure_package_config_file(
+    ${CMAKE_CURRENT_LIST_DIR}/cmake/ZdepthConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake
+    INSTALL_DESTINATION
+        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
+)
+
+install(
+    FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfigVersion.cmake
+    DESTINATION
+        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
+)
+
+export(
+    EXPORT
+        zdepth-export
+    FILE
+        ${CMAKE_CURRENT_BINARY_DIR}/ZdepthTargets.cmake
+    NAMESPACE
+        zdepth::
 )
