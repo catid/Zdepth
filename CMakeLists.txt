@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 project(zdepth LANGUAGES CXX)
-include("cmake/mimalloc-config-version.cmake")
+include("cmake/zdepth-config-version.cmake")
 set(CMAKE_CXX_STANDARD 11)
 
 
