@@ -62,6 +62,7 @@ include_directories(include)
 # zdepth library
 
 add_library(zdepth STATIC ${SOURCE_FILES})
+add_library(zdepth::zdepth ALIAS zdepth)
 
 target_link_libraries(zdepth PUBLIC zstd)
 
@@ -69,9 +70,6 @@ target_include_directories(zdepth PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
 )
-
-set_property(TARGET zdepth PROPERTY VERSION ${PROJECT_VERSION})
-set_property(TARGET zdepth PROPERTY SOVERSION ${PROJECT_VERSION_MAJOR})
 
 # zdepth test application
 
@@ -85,22 +83,21 @@ target_link_libraries(zdepth_test PRIVATE zdepth)
 install(FILES LICENSE DESTINATION ".")
 install(FILES README.md DESTINATION ".")
 
-install(FILES ${INCLUDE_FILES} DESTINATION include)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-install(TARGETS zdepth_test DESTINATION bin)
-
-install(TARGETS
+install(
+    TARGETS
         zdepth
         zstd
-    EXPORT zdepth-export
+    EXPORT
+        zdepth-targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 install(
     EXPORT
-        zdepth-export
+        zdepth-targets
     FILE
         ZdepthTargets.cmake
     NAMESPACE
@@ -134,9 +131,11 @@ install(
 
 export(
     EXPORT
-        zdepth-export
+        zdepth-targets
     FILE
         ${CMAKE_CURRENT_BINARY_DIR}/ZdepthTargets.cmake
     NAMESPACE
         zdepth::
 )
+
+export(PACKAGE zdepth)
