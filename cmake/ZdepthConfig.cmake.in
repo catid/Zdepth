@@ -1,0 +1,7 @@
+get_filename_component(zdepth_CMAKE_DIR "${CMAKE_CURRENT_LIST_FILE}" PATH)
+
+if(NOT TARGET zdepth::zdepth)
+    include("${zdepth_CMAKE_DIR}/ZdepthTargets.cmake")
+endif()
+
+set(zdepth_LIBRARIES zdepth::zdepth)
