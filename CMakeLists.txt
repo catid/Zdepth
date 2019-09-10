@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(zdepth LANGUAGES CXX)
+project(zdepth VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 
@@ -63,39 +63,49 @@ include_directories(include)
 
 add_library(zdepth STATIC ${SOURCE_FILES})
 
+target_link_libraries(zdepth PUBLIC zstd)
+
 target_include_directories(zdepth PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
 )
-target_link_libraries(zdepth PUBLIC zstd)
 
-install(FILES ${INCLUDE_FILES} DESTINATION include)
-install(TARGETS zdepth DESTINATION lib)
+set_property(TARGET zdepth PROPERTY VERSION ${PROJECT_VERSION})
+set_property(TARGET zdepth PROPERTY SOVERSION ${PROJECT_VERSION_MAJOR})
+set_property(TARGET zdepth PROPERTY DEBUG_POSTFIX d)
 
 # zdepth test application
 
 add_executable(zdepth_test tests/zdepth_test.cpp)
 target_link_libraries(zdepth_test PRIVATE zdepth)
 
+
+################################################################################
+# Install
+
+install(FILES LICENSE DESTINATION ".")
+install(FILES README.md DESTINATION ".")
+
+install(FILES ${INCLUDE_FILES} DESTINATION include)
+
 install(TARGETS zdepth_test DESTINATION bin)
 
-# Make it discoverable with find_package()
 install(TARGETS
         zdepth
         zstd
-    EXPORT ZdepthConfig
+    EXPORT zdepth-export
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-export(TARGETS
-        zdepth
-        zstd
-    NAMESPACE zdepth::
-    FILE "${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake"
-)
-install(EXPORT
-        ZdepthConfig
-    DESTINATION "${CMAKE_INSTALL_DATADIR}/zdepth/cmake"
-    NAMESPACE zdepth::
+
+install(
+    EXPORT
+        zdepth-export
+    FILE
+        ZdepthTargets.cmake
+    NAMESPACE
+        zdepth::
+    DESTINATION
+        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
 )
