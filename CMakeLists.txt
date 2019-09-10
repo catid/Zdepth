@@ -63,7 +63,10 @@ include_directories(include)
 
 add_library(zdepth STATIC ${SOURCE_FILES})
 
-target_include_directories(zdepth PUBLIC include)
+target_include_directories(zdepth PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
 target_link_libraries(zdepth PUBLIC zstd)
 
 install(FILES ${INCLUDE_FILES} DESTINATION include)
@@ -75,3 +78,24 @@ add_executable(zdepth_test tests/zdepth_test.cpp)
 target_link_libraries(zdepth_test PRIVATE zdepth)
 
 install(TARGETS zdepth_test DESTINATION bin)
+
+# Make it discoverable with find_package()
+install(TARGETS
+        zdepth
+        zstd
+    EXPORT ZdepthConfig
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+export(TARGETS
+        zdepth
+        zstd
+    NAMESPACE zdepth::
+    FILE "${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake"
+)
+install(EXPORT
+        ZdepthConfig
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/zdepth/cmake"
+    NAMESPACE zdepth::
+)
