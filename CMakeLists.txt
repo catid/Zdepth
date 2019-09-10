@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
-project(zdepth VERSION 1.0.0 LANGUAGES CXX)
-
+project(zdepth LANGUAGES CXX)
+include("cmake/mimalloc-config-version.cmake")
 set(CMAKE_CXX_STANDARD 11)
 
 
@@ -82,8 +82,7 @@ target_link_libraries(zdepth_test PRIVATE zdepth)
 
 install(FILES LICENSE DESTINATION ".")
 install(FILES README.md DESTINATION ".")
-
-install(DIRECTORY include/ DESTINATION include)
+install(FILES ${INCLUDE_FILES} DESTINATION include)
 
 install(
     TARGETS
@@ -95,48 +94,7 @@ install(
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
-install(
-    EXPORT
-        zdepth-targets
-    FILE
-        ZdepthTargets.cmake
-    NAMESPACE
-        zdepth::
-    DESTINATION
-        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
-)
-
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfigVersion.cmake
-    VERSION
-        ${PROJECT_VERSION}
-    COMPATIBILITY
-        AnyNewerVersion
-)
-configure_package_config_file(
-    ${CMAKE_CURRENT_LIST_DIR}/cmake/ZdepthConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/ZdepthConfig.cmake
-    INSTALL_DESTINATION
-        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
-)
-
-install(
-    FILES
-        ${PROJECT_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/ZdepthConfig.cmake
-        ${PROJECT_BINARY_DIR}/ZdepthConfigVersion.cmake
-    DESTINATION
-        "${CMAKE_INSTALL_LIBDIR}/cmake/zdepth"
-)
-
-export(
-    TARGETS
-        zdepth
-        zstd
-    FILE
-        "${PROJECT_BINARY_DIR}/ZdepthTargets.cmake"
-    NAMESPACE
-        zdepth::
-)
-
-export(PACKAGE zdepth)
+install(FILES cmake/zdepth-config.cmake DESTINATION cmake)
+install(FILES cmake/zdepth-config-version.cmake DESTINATION cmake)
+install(EXPORT zdepth-targets DESTINATION cmake)
+install(FILES "$<TARGET_FILE:zdepth>" DESTINATION lib)
