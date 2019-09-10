@@ -1,8 +1,8 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
 #include "zdepth.hpp"
-
 #include <zstd.h> // Zstd
+#include <string.h> // memcpy
 
 namespace zdepth {
 
@@ -234,12 +234,10 @@ void ZstdCompress(
         uncompressed.data(),
         uncompressed.size(),
         kZstdLevel);
-
     if (ZSTD_isError(size)) {
         compressed.clear();
         return;
     }
-
     compressed.resize(size);
 }
 
@@ -250,20 +248,17 @@ bool ZstdDecompress(
     std::vector<uint8_t>& uncompressed)
 {
     uncompressed.resize(uncompressed_bytes);
-
     const size_t size = ZSTD_decompress(
         uncompressed.data(),
         uncompressed.size(),
         compressed_data,
         compressed_bytes);
-
     if (ZSTD_isError(size)) {
         return false;
     }
-    if (size != uncompressed_bytes) {
+    if (size != static_cast<size_t>( uncompressed_bytes )) {
         return false;
     }
-
     return true;
 }
 
@@ -609,7 +604,7 @@ DepthResult DepthCompressor::Decompress(
     CurrentFrameIndex = (CurrentFrameIndex + 1) % 2;
     uint16_t* prev_depth = nullptr;
     if (!keyframe) {
-        if (QuantizedDepth[CurrentFrameIndex].size() != n) {
+        if (QuantizedDepth[CurrentFrameIndex].size() != static_cast<size_t>( n )) {
             return DepthResult::MissingPFrame;
         }
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
@@ -681,7 +676,7 @@ DepthResult DepthCompressor::Decompress(
         return DepthResult::Corrupted;
     }
 
-    if (Zeroes.size() != n / 8) {
+    if (Zeroes.size() != static_cast<size_t>( n ) / 8) {
         return DepthResult::Corrupted;
     }
     DecodeZeroes(width, height, depth);
@@ -703,7 +698,7 @@ bool DepthCompressor::DecompressImage(
 {
     const int cy = height / kBlockSize;
     const int cx = width / kBlockSize;
-    if (Blocks.size() != (cx - 1) * (cy - 1)) {
+    if (Blocks.size() != static_cast<size_t>( (cx - 1) * (cy - 1) )) {
         return false;
     }
 

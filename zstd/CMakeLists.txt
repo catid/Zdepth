@@ -13,7 +13,7 @@ file(GLOB ZSTD_SOURCE_FILES
     src/*.h
 )
 
-include_directories(include)
+include_directories(include src)
 
 
 ################################################################################
