@@ -62,7 +62,20 @@ also has a capture plugin for single cameras.
 
 There's example usage in the `tests` folder.
 
-This project provides a CMakeLists.txt that generates a `zdepth` target.
+This project provides a CMakeLists.txt that generates a `zdepth` target.  Zdepth supports CMake `find_package()`.
+
+```
+    # Example CMake ExternalProject include
+    include(ExternalProject)
+    ExternalProject_Add(
+        zdepth
+        GIT_REPOSITORY  https://github.com/catid/Zdepth.git
+        GIT_TAG         master
+        GIT_SHALLOW     TRUE
+        SOURCE_DIR      ${CMAKE_SOURCE_DIR}/extern/src/zdepth
+        CMAKE_ARGS      -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_INSTALL_PREFIX=${CMAKE_SOURCE_DIR}/extern/bin/zdepth
+    )
+```
 
 Link to the target and include the header:
 
@@ -231,7 +244,7 @@ Feel free to modify the format for your data to improve the performance.
 
 #### Credits
 
-Tonk uses the Zstd library (slightly modified).
+Zdepth uses the Zstd library (slightly modified).
 
 Inspired by prior work:
 + Microsoft Fast Lossless Depth Image Compression (RVL library) available [here](https://www.microsoft.com/en-us/research/publication/fast-lossless-depth-image-compression/)
