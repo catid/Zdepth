@@ -84,6 +84,9 @@ install(FILES LICENSE DESTINATION ".")
 install(FILES README.md DESTINATION ".")
 install(FILES ${INCLUDE_FILES} DESTINATION include)
 
+# Disable the rest of this because it does not seem to work on Linux
+return()
+
 install(
     TARGETS
         zdepth
