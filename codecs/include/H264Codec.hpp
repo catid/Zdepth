@@ -68,12 +68,13 @@ enum class VideoBackend
     Cuda,
 };
 
-class VideoCodec
+class H264Codec
 {
 public:
     bool Encode(
         int width,
         int height,
+        bool keyframe,
         std::vector<uint8_t>& data,
         std::vector<uint8_t>& compressed);
 
@@ -96,8 +97,11 @@ protected:
     std::shared_ptr<NvEncoderCuda> CudaEncoder;
     std::shared_ptr<NvDecoder> CudaDecoder;
 
+    uint64_t NextTimestamp = 0;
+
 
     bool EncodeNvenc(
+        bool keyframe,
         std::vector<uint8_t>& data,
         std::vector<uint8_t>& compressed);
     bool DecodeNvdec(

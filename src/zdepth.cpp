@@ -119,6 +119,58 @@ const char* DepthResultString(DepthResult result)
 //------------------------------------------------------------------------------
 // Tools
 
+// Little-endian 16-bit read
+DEPTH_INLINE uint16_t ReadU16_LE(const void* data)
+{
+#ifdef DEPTH_ALIGNED_ACCESSES
+    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
+    return ((uint16_t)u8p[1] << 8) | u8p[0];
+#else
+    const uint16_t* word_ptr = reinterpret_cast<const uint16_t*>(data);
+    return *word_ptr;
+#endif
+}
+
+// Little-endian 32-bit read
+DEPTH_INLINE uint32_t ReadU32_LE(const void* data)
+{
+#ifdef DEPTH_ALIGNED_ACCESSES
+    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
+    return ((uint32_t)u8p[3] << 24) | ((uint32_t)u8p[2] << 16) | ((uint32_t)u8p[1] << 8) | u8p[0];
+#else
+    const uint32_t* u32p = reinterpret_cast<const uint32_t*>(data);
+    return *u32p;
+#endif
+}
+
+// Little-endian 16-bit write
+DEPTH_INLINE void WriteU16_LE(void* data, uint16_t value)
+{
+#ifdef DEPTH_ALIGNED_ACCESSES
+    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
+    u8p[1] = static_cast<uint8_t>(value >> 8);
+    u8p[0] = static_cast<uint8_t>(value);
+#else
+    uint16_t* word_ptr = reinterpret_cast<uint16_t*>(data);
+    *word_ptr = value;
+#endif
+}
+
+// Little-endian 32-bit write
+DEPTH_INLINE void WriteU32_LE(void* data, uint32_t value)
+{
+#ifdef DEPTH_ALIGNED_ACCESSES
+    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
+    u8p[3] = (uint8_t)(value >> 24);
+    u8p[2] = static_cast<uint8_t>(value >> 16);
+    u8p[1] = static_cast<uint8_t>(value >> 8);
+    u8p[0] = static_cast<uint8_t>(value);
+#else
+    uint32_t* word_ptr = reinterpret_cast<uint32_t*>(data);
+    *word_ptr = value;
+#endif
+}
+
 bool IsDepthFrame(const uint8_t* file_data, unsigned file_bytes)
 {
     if (file_bytes < kDepthHeaderBytes) {
@@ -349,69 +401,6 @@ bool ZstdDecompress(
 
 
 //------------------------------------------------------------------------------
-// Pack12
-
-void Pad12(std::vector<uint16_t>& data)
-{
-    if (data.size() % 2 != 0) {
-        data.push_back(0);
-    }
-}
-
-void Pack12(
-    const std::vector<uint16_t>& unpacked,
-    std::vector<uint8_t>& packed)
-{
-    unsigned data_count = static_cast<unsigned>( unpacked.size() );
-    packed.resize(data_count + (data_count / 2));
-    uint8_t* packed0 = packed.data();
-    uint8_t* packed1 = packed0 + data_count;
-    const uint16_t* data = unpacked.data();
-    const uint16_t* data_end = data + data_count;
-    while (data < data_end)
-    {
-        const uint16_t x = data[0];
-        const uint16_t y = data[1];
-        data += 2;
-
-        packed0[0] = static_cast<uint8_t>( x >> 4 );
-        packed0[1] = static_cast<uint8_t>( y >> 4 );
-        packed0 += 2;
-
-        packed1[0] = static_cast<uint8_t>( (x & 15) | ((y & 15) << 4) );
-        packed1++;
-    }
-}
-
-void Unpack12(
-    const std::vector<uint8_t>& packed,
-    std::vector<uint16_t>& unpacked)
-{
-    unsigned data_count = static_cast<unsigned>(packed.size()) * 2 / 3;
-    unpacked.resize(data_count);
-    const uint8_t* packed0 = packed.data();
-    const uint8_t* packed1 = packed0 + data_count;
-    uint16_t* data = unpacked.data();
-    const uint16_t* data_end = data + data_count;
-    while (data < data_end)
-    {
-        uint16_t x = static_cast<uint16_t>( packed0[0] ) << 4;
-        uint16_t y = static_cast<uint16_t>( packed0[1] ) << 4;
-        packed0 += 2;
-
-        const uint8_t p1 = packed1[0];
-        x |= p1 & 15;
-        y |= p1 >> 4;
-        packed1++;
-
-        data[0] = x;
-        data[1] = y;
-        data += 2;
-    }
-}
-
-
-//------------------------------------------------------------------------------
 // DepthCompressor
 
 void DepthCompressor::Compress(
@@ -433,238 +422,39 @@ void DepthCompressor::Compress(
     // Get depth for previous frame
     const uint16_t* depth = QuantizedDepth[CurrentFrameIndex].data();
 
-    std::vector<uint8_t> lows(width * height + width * height / 2);
-    for (int i = 0; i < width * height; ++i) {
-        lows[i] = static_cast<uint8_t>( depth[i] );
-    }
-
-    const uint64_t ta = GetTimeUsec();
-
-    const NvEncInputFrame* encoderInputFrame = Encoder->GetNextInputFrame();
-    NvEncoderCuda::CopyToDeviceFrame(
-        cuContext,
-        lows.data(),
-        0,
-        (CUdeviceptr)encoderInputFrame->inputPtr,
-        (int)encoderInputFrame->pitch,
-        width,
-        height, 
-        CU_MEMORYTYPE_HOST, 
-        encoderInputFrame->bufferFormat,
-        encoderInputFrame->chromaOffsets,
-        encoderInputFrame->numChromaPlanes);
-
-    std::vector<std::vector<uint8_t>> video;
-    Encoder->EncodeFrame(video);
-    std::vector<std::vector<uint8_t>> video2;
-    Encoder->EndEncode(video2);
-
-    const uint64_t tb = GetTimeUsec();
-
-    for (auto& v : video)
-    {
-        cout << "encode frame: " << v.size() << " bytes in " << (tb - ta) / 1000.f << " msec" << endl;
-    }
-    for (auto& v : video2)
-    {
-        cout << "encode frame: " << v.size() << " bytes in " << (tb - ta) / 1000.f << " msec" << endl;
-    }
-
-    std::vector<uint8_t> test, output;
-
-    test.resize(width * height / 2);
-
-    for (int i = 0; i < width * height; i += 2) {
-        test[i/2] = (depth[i] >> 8) | ((depth[i + 1] >> 8) << 4);
-    }
-
-    ZstdCompress(test, output);
-
-    cout << "Lossless part: " << output.size() << " bytes" << endl;
-
-
-
-
-
     CurrentFrameIndex = (CurrentFrameIndex + 1) % 2;
     const uint16_t* prev_depth = nullptr;
     if (!keyframe) {
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
     }
 
-    EncodeZeroes(width, height, depth);
+    // Split data into high/low parts
+    const int n = width * height;
+    Low.resize(n + n / 2);
+    High.resize(n / 2);
+    for (int i = 0; i < n; i += 2) {
+        const uint16_t depth_0 = depth[i];
+        const uint16_t depth_1 = depth[i + 1];
+        unsigned high_0 = 0, high_1 = 0;
+        if (depth_0) {
+            high_0 = (depth_0 >> 8) - 1;
+        }
+        if (depth_1) {
+            high_1 = (depth_1 >> 8) - 1;
+        }
+        High[i / 2] = static_cast<uint8_t>( high_0 | (high_1 << 4) );
+        Low[i] = static_cast<uint8_t>( depth_0 );
+        Low[i + 1] = static_cast<uint8_t>( depth_1 );
+    }
 
-    CompressImage(width, height, depth, prev_depth);
+    // FIXME: Preprocess the High part based on previous frame
 
-    // Do Zstd compressions all together to keep the code cache hot:
-
-    Pad12(Surfaces);
-    Pack12(Surfaces, Packed);
-    Surfaces_UncompressedBytes = static_cast<unsigned>( Packed.size() );
-    ZstdCompress(Packed, SurfacesOut);
-
-    Pad12(Edges);
-    Pack12(Edges, Packed);
-    Edges_UncompressedBytes = static_cast<unsigned>( Packed.size() );
-    ZstdCompress(Packed, EdgesOut);
-
-    Zeroes_UncompressedBytes = static_cast<unsigned>( Zeroes.size() );
-    ZstdCompress(Zeroes, ZeroesOut);
-
-    Blocks_UncompressedBytes = static_cast<unsigned>( Blocks.size() );
-    ZstdCompress(Blocks, BlocksOut);
-
+    ZstdCompress(High, HighOut);
+    H264.Encode(width, height, keyframe, Low, LowOut);
     WriteCompressedFile(width, height, keyframe, compressed);
 
-    cout << "Surfaces_UncompressedBytes = " << Surfaces_UncompressedBytes << endl;
-    cout << "Edges_UncompressedBytes = " << Edges_UncompressedBytes << endl;
-    cout << "Zeroes_UncompressedBytes = " << Zeroes_UncompressedBytes << endl;
-    cout << "Blocks_UncompressedBytes = " << Blocks_UncompressedBytes << endl;
-}
-
-void DepthCompressor::CompressImage(
-    int width,
-    int height,
-    const uint16_t* depth,
-    const uint16_t* prev_depth)
-{
-    // Accumulated through the end of the filtering then compressed separately
-    Surfaces.clear();
-    Blocks.clear();
-    Edges.clear();
-
-    const int cy = height / kBlockSize;
-    const int cx = width / kBlockSize;
-    Blocks.resize((cx-1) * (cy-1));
-
-    const uint16_t* outer_row = depth;
-    for (int iy = 0; iy < cy; ++iy, outer_row += width * kBlockSize)
-    {
-        const uint16_t* inner_row = outer_row;
-
-        for (int ix = 0; ix < cx; ++ix, inner_row += kBlockSize)
-        {
-            if (ix == 0 || iy == 0)
-            {
-                const uint16_t* row = inner_row;
-                for (int y = 0; y < kBlockSize; ++y, row += width)
-                {
-                    for (int x = 0; x < kBlockSize; ++x)
-                    {
-                        // Get quantized depth value for this element
-                        const unsigned d = row[x];
-                        if (d == 0) {
-                            continue;
-                        }
-
-                        const unsigned left0 = x > 0 ? row[x - 1] : 0;
-                        const unsigned up0 = y > 0 ? row[x - width] : 0;
-                        const unsigned zigzag = ApplyPrediction(d, Predict_Larger(left0, up0));
-                        if (!left0 || !up0) {
-                            Edges.push_back(static_cast<uint16_t>( zigzag ));
-                        } else {
-                            Surfaces.push_back(static_cast<uint16_t>( zigzag ));
-                        }
-                    }
-                }
-
-                continue;
-            }
-
-            // Identify the prediction with the best accuracy for this block:
-            unsigned pred_sum[PredictorType_Count] = {0};
-
-            const uint16_t* row = inner_row;
-            for (int y = 0; y < kBlockSize; ++y, row += width)
-            {
-                for (int x = 0; x < kBlockSize; ++x)
-                {
-                    const unsigned d = row[x];
-                    if (d != 0)
-                    {
-                        const unsigned left0 = row[x - 1];
-                        const unsigned left1 = row[x - 2];
-                        const unsigned up0 = row[x - width];
-                        const unsigned up1 = row[x - width * 2];
-
-                        pred_sum[PredictorType_Larger] += ApplyPrediction(d, Predict_Larger(left0, up0));
-                        pred_sum[PredictorType_Up] += ApplyPrediction(d, Predict_Up(left0, up0));
-                        pred_sum[PredictorType_Left] += ApplyPrediction(d, Predict_Left(left0, up0));
-                        pred_sum[PredictorType_UpTrend] += ApplyPrediction(d, Predict_UpTrend(left0, up0, up1));
-                        pred_sum[PredictorType_LeftTrend] += ApplyPrediction(d, Predict_LeftTrend(left0, left1, up0));
-                        pred_sum[PredictorType_Average] += ApplyPrediction(d, Predict_Average(left0, up0));
-
-                        if (prev_depth) {
-                            pred_sum[PredictorType_PrevFrame] += ApplyPrediction(d, Predict_PrevFrame(prev_depth[row + x - depth], left0, up0));
-                        }
-                    }
-                }
-            } // end x,y loop
-
-            // Find best one
-            unsigned smallest_i = pred_sum[0];
-            int best_predictor = 0;
-            int pred_count = PredictorType_Count;
-            if (!prev_depth) {
-                pred_count = PredictorType_PrevFrame; // Skip P-frame ones
-            }
-            for (int i = 1; i < pred_count; ++i)
-            {
-                if (pred_sum[i] < smallest_i) {
-                    best_predictor = i;
-                    smallest_i = pred_sum[i];
-                }
-            }
-            Blocks[(iy-1) * (cx-1) + (ix-1)] = static_cast<uint8_t>( best_predictor );
-
-            row = inner_row;
-            for (int y = 0; y < kBlockSize; ++y, row += width)
-            {
-                for (int x = 0; x < kBlockSize; ++x)
-                {
-                    const unsigned d = row[x];
-                    if (d == 0) {
-                        continue;
-                    }
-
-                    const unsigned left0 = row[x - 1];
-                    const unsigned up0 = row[x - width];
-
-                    unsigned zigzag;
-                    switch (best_predictor)
-                    {
-                    default:
-                    case PredictorType_Larger:
-                        zigzag = ApplyPrediction(d, Predict_Larger(left0, up0));
-                        break;
-                    case PredictorType_Up:
-                        zigzag = ApplyPrediction(d, Predict_Up(left0, up0));
-                        break;
-                    case PredictorType_Left:
-                        zigzag = ApplyPrediction(d, Predict_Left(left0, up0));
-                        break;
-                    case PredictorType_UpTrend:
-                        zigzag = ApplyPrediction(d, Predict_UpTrend(left0, up0, row[x - width * 2]));
-                        break;
-                    case PredictorType_LeftTrend:
-                        zigzag = ApplyPrediction(d, Predict_LeftTrend(left0, row[x - 2], up0));
-                        break;
-                    case PredictorType_Average:
-                        zigzag = ApplyPrediction(d, Predict_Average(left0, up0));
-                        break;
-                    case PredictorType_PrevFrame:
-                        zigzag = ApplyPrediction(d, Predict_PrevFrame(prev_depth[row + x - depth], left0, up0));
-                        break;
-                    }
-                    if (!left0 || !up0) {
-                        Edges.push_back(static_cast<uint16_t>( zigzag ));
-                    } else {
-                        Surfaces.push_back(static_cast<uint16_t>( zigzag ));
-                    }
-                }
-            } // next depth pixel
-        } 
-    } // next block
+    cout << "Lossless part: " << HighOut.size() << " bytes" << endl;
+    cout << "Lossy part: " << LowOut.size() << " bytes" << endl;
 }
 
 void DepthCompressor::WriteCompressedFile(
@@ -675,10 +465,8 @@ void DepthCompressor::WriteCompressedFile(
 {
     compressed.resize(
         kDepthHeaderBytes +
-        ZeroesOut.size() +
-        SurfacesOut.size() +
-        BlocksOut.size() +
-        EdgesOut.size());
+        HighOut.size() +
+        LowOut.size());
     uint8_t* copy_dest = compressed.data();
 
     // Write header
@@ -693,24 +481,16 @@ void DepthCompressor::WriteCompressedFile(
     WriteU16_LE(copy_dest + 2, static_cast<uint16_t>( CompressedFrameNumber ));
     WriteU16_LE(copy_dest + 4, static_cast<uint16_t>( width ));
     WriteU16_LE(copy_dest + 6, static_cast<uint16_t>( height ));
-    WriteU32_LE(copy_dest + 8, Zeroes_UncompressedBytes);
-    WriteU32_LE(copy_dest + 12, static_cast<uint32_t>( ZeroesOut.size() ));
-    WriteU32_LE(copy_dest + 16, Blocks_UncompressedBytes);
-    WriteU32_LE(copy_dest + 20, static_cast<uint32_t>( BlocksOut.size() ));
-    WriteU32_LE(copy_dest + 24, Edges_UncompressedBytes);
-    WriteU32_LE(copy_dest + 28, static_cast<uint32_t>( EdgesOut.size() ));
-    WriteU32_LE(copy_dest + 32, Surfaces_UncompressedBytes);
-    WriteU32_LE(copy_dest + 36, static_cast<uint32_t>( SurfacesOut.size() ));
+    WriteU32_LE(copy_dest + 8, static_cast<uint32_t>( High.size() ));
+    WriteU32_LE(copy_dest + 12, static_cast<uint32_t>( HighOut.size() ));
+    WriteU32_LE(copy_dest + 16, static_cast<uint32_t>( Low.size() ));
+    WriteU32_LE(copy_dest + 20, static_cast<uint32_t>( LowOut.size() ));
     copy_dest += kDepthHeaderBytes;
 
     // Concatenate the compressed data
-    memcpy(copy_dest, ZeroesOut.data(), ZeroesOut.size());
-    copy_dest += ZeroesOut.size();
-    memcpy(copy_dest, BlocksOut.data(), BlocksOut.size());
-    copy_dest += BlocksOut.size();
-    memcpy(copy_dest, EdgesOut.data(), EdgesOut.size());
-    copy_dest += EdgesOut.size();
-    memcpy(copy_dest, SurfacesOut.data(), SurfacesOut.size());
+    memcpy(copy_dest, HighOut.data(), HighOut.size());
+    copy_dest += HighOut.size();
+    memcpy(copy_dest, LowOut.data(), LowOut.size());
 }
 
 DepthResult DepthCompressor::Decompress(
@@ -753,246 +533,69 @@ DepthResult DepthCompressor::Decompress(
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
     }
 
-    Zeroes_UncompressedBytes = ReadU32_LE(src + 8);
-    const unsigned ZeroesCompressedBytes = ReadU32_LE(src + 12);
-    Blocks_UncompressedBytes = ReadU32_LE(src + 16);
-    const unsigned BlocksCompressedBytes = ReadU32_LE(src + 20);
-    Edges_UncompressedBytes = ReadU32_LE(src + 24);
-    const unsigned EdgesCompressedBytes = ReadU32_LE(src + 28);
-    Surfaces_UncompressedBytes = ReadU32_LE(src + 32);
-    const unsigned SurfacesCompressedBytes = ReadU32_LE(src + 36);
+    High_UncompressedBytes = ReadU32_LE(src + 8);
+    const unsigned High_CompressedBytes = ReadU32_LE(src + 12);
+    Low_UncompressedBytes = ReadU32_LE(src + 16);
+    const unsigned Low_CompressedBytes = ReadU32_LE(src + 20);
 
-    if (Blocks_UncompressedBytes < 2) {
+    if (High_UncompressedBytes < 2) {
         return DepthResult::Corrupted;
     }
 
     if (compressed.size() !=
         kDepthHeaderBytes +
-        ZeroesCompressedBytes +
-        BlocksCompressedBytes +
-        EdgesCompressedBytes +
-        SurfacesCompressedBytes)
+        High_CompressedBytes +
+        Low_CompressedBytes)
     {
         return DepthResult::FileTruncated;
     }
 
-    const uint8_t* ZeroesData = src + kDepthHeaderBytes;
-    const uint8_t* BlocksData = ZeroesData + ZeroesCompressedBytes;
-    const uint8_t* EdgesData = BlocksData + BlocksCompressedBytes;
-    const uint8_t* SurfacesData = EdgesData + EdgesCompressedBytes;
+    const uint8_t* High_Data = src + kDepthHeaderBytes;
+    const uint8_t* Low_Data = High_Data + High_CompressedBytes;
 
     bool success = ZstdDecompress(
-        ZeroesData,
-        ZeroesCompressedBytes,
-        Zeroes_UncompressedBytes,
-        Zeroes);
+        High_Data,
+        High_CompressedBytes,
+        High_UncompressedBytes,
+        High);
     if (!success) {
         return DepthResult::Corrupted;
     }
 
-    success = ZstdDecompress(
-        EdgesData,
-        EdgesCompressedBytes,
-        Edges_UncompressedBytes,
-        Packed);
-    if (!success) {
-        return DepthResult::Corrupted;
-    }
-    Unpack12(Packed, Edges);
+    // FIXME: Decode
 
-    success = ZstdDecompress(
-        SurfacesData,
-        SurfacesCompressedBytes,
-        Surfaces_UncompressedBytes,
-        Packed);
-    if (!success) {
-        return DepthResult::Corrupted;
-    }
-    Unpack12(Packed, Surfaces);
-
-    success = ZstdDecompress(
-        BlocksData,
-        BlocksCompressedBytes,
-        Blocks_UncompressedBytes,
-        Blocks);
+    success = H264.Decode(
+        width,
+        height,
+        Low_Data,
+        Low_CompressedBytes,
+        Low);
     if (!success) {
         return DepthResult::Corrupted;
     }
 
-    if (Zeroes.size() != static_cast<size_t>( n ) / 8) {
-        return DepthResult::Corrupted;
-    }
-    DecodeZeroes(width, height, depth);
-
-    success = DecompressImage(width, height, depth, prev_depth);
-    if (!success) {
-        return DepthResult::Corrupted;
+    for (int i = 0; i < n; i += 2) {
+        const uint8_t high = High[i / 2];
+        const uint8_t low_0 = Low[i];
+        const uint8_t low_1 = Low[i + 1];
+        unsigned high_0 = high >> 4;
+        unsigned high_1 = high & 15;
+        if (high_0 == 0) {
+            depth[i] = 0;
+        } else {
+            high_0--;
+            depth[i] = static_cast<uint16_t>(low_0 | (high_0 << 8));
+        }
+        if (high_1 == 0) {
+            depth[i + 1] = 0;
+        } else {
+            high_1--;
+            depth[i + 1] = static_cast<uint16_t>(low_1 | (high_1 << 8));
+        }
     }
 
     DequantizeDepthImage(width, height, depth, depth_out);
     return DepthResult::Success;
-}
-
-bool DepthCompressor::DecompressImage(
-    int width,
-    int height,
-    uint16_t* depth,
-    const uint16_t* prev_depth)
-{
-    const int cy = height / kBlockSize;
-    const int cx = width / kBlockSize;
-    if (Blocks.size() != static_cast<size_t>( (cx - 1) * (cy - 1) )) {
-        return false;
-    }
-
-    unsigned EdgesIndex = 0, SurfacesIndex = 0;
-
-    uint16_t* outer_row = depth;
-    for (int iy = 0; iy < cy; ++iy, outer_row += kBlockSize * width)
-    {
-        uint16_t* inner_row = outer_row;
-        for (int ix = 0; ix < cx; ++ix, inner_row += kBlockSize)
-        {
-            if (ix == 0 || iy == 0)
-            {
-                uint16_t* row = inner_row;
-                for (int y = 0; y < kBlockSize; ++y, row += width)
-                {
-                    for (int x = 0; x < kBlockSize; ++x)
-                    {
-                        // Get quantized depth value for this element
-                        unsigned d = row[x];
-                        if (d == 0) {
-                            continue;
-                        }
-
-                        const unsigned left0 = x > 0 ? row[x - 1] : 0;
-                        const unsigned up0 = y > 0 ? row[x - width] : 0;
-
-                        unsigned zigzag;
-                        if (!left0 || !up0) {
-                            if (EdgesIndex >= Edges.size()) {
-                                return false;
-                            }
-                            zigzag = Edges[EdgesIndex++];
-                        } else {
-                            if (SurfacesIndex >= Surfaces.size()) {
-                                return false;
-                            }
-                            zigzag = Surfaces[SurfacesIndex++];
-                        }
-
-                        d = UndoPrediction(zigzag, Predict_Larger(left0, up0));
-                        row[x] = static_cast<uint16_t>( d );
-                    }
-                }
-
-                continue;
-            }
-
-            const uint8_t predictor = Blocks[(iy-1) * (cx-1) + (ix-1)];
-
-            uint16_t* row = inner_row;
-            for (int y = 0; y < kBlockSize; ++y, row += width)
-            {
-                for (int x = 0; x < kBlockSize; ++x)
-                {
-                    unsigned d = row[x];
-                    if (d == 0) {
-                        continue;
-                    }
-
-                    const unsigned left0 = row[x - 1];
-                    const unsigned up0 = row[x - width];
-
-                    unsigned zigzag;
-                    if (!left0 || !up0) {
-                        if (EdgesIndex >= Edges.size()) {
-                            return false;
-                        }
-                        zigzag = Edges[EdgesIndex++];
-                    } else {
-                        if (SurfacesIndex >= Surfaces.size()) {
-                            return false;
-                        }
-                        zigzag = Surfaces[SurfacesIndex++];
-                    }
-
-                    switch (predictor)
-                    {
-                    default:
-                    case PredictorType_Larger:
-                        d = UndoPrediction(zigzag, Predict_Larger(left0, up0));
-                        break;
-                    case PredictorType_Up:
-                        d = UndoPrediction(zigzag, Predict_Up(left0, up0));
-                        break;
-                    case PredictorType_Left:
-                        d = UndoPrediction(zigzag, Predict_Left(left0, up0));
-                        break;
-                    case PredictorType_UpTrend:
-                        d = UndoPrediction(zigzag, Predict_UpTrend(left0, up0, row[x - width * 2]));
-                        break;
-                    case PredictorType_LeftTrend:
-                        d = UndoPrediction(zigzag, Predict_LeftTrend(left0, row[x - 2], up0));
-                        break;
-                    case PredictorType_Average:
-                        d = UndoPrediction(zigzag, Predict_Average(left0, up0));
-                        break;
-                    case PredictorType_PrevFrame:
-                        d = UndoPrediction(zigzag, Predict_PrevFrame(prev_depth[row + x - depth], left0, up0));
-                        break;
-                    }
-
-                    row[x] = static_cast<uint16_t>( d );
-                }
-            } // next depth pixel
-        } 
-    } // next block
-
-    return true;
-}
-
-void DepthCompressor::EncodeZeroes(
-    int width,
-    int height,
-    const uint16_t* depth)
-{
-    const int bytes = width * height / 8;
-    Zeroes.resize(bytes);
-
-    unsigned prev = 0;
-    for (int i = 0; i < bytes; ++i, depth += 8)
-    {
-        unsigned bits = 0;
-        for (int j = 0; j < 8; ++j) {
-            const unsigned x = depth[j] ? 1 : 0;
-            bits |= (x ^ prev) << j;
-            prev = x;
-        }
-
-        Zeroes[i] = static_cast<uint8_t>( bits );
-    }
-}
-
-void DepthCompressor::DecodeZeroes(
-    int width,
-    int height,
-    uint16_t* depth)
-{
-    const int bytes = width * height / 8;
-
-    unsigned prev = 0;
-    for (int i = 0; i < bytes; ++i, depth += 8)
-    {
-        const unsigned bits = Zeroes[i];
-
-        for (int j = 0; j < 8; ++j) {
-            unsigned x_xor_prev = (bits >> j) & 1;
-            prev ^= x_xor_prev;
-            depth[j] = static_cast<uint16_t>( prev );
-        }
-    }
 }
 
 

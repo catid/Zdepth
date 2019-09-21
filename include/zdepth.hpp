@@ -1,26 +1,23 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
 /*
-    Zdepth
+    ZdepthLossy
 
-    Lossless depth buffer compression designed and tested for Azure Kinect DK.
+    Lossy depth buffer compression designed and tested for Azure Kinect DK.
     Based on the Facebook Zstd library for compression.
 
     The compressor defines a file format and performs full input checking.
     Supports temporal back-references similar to other video formats.
 
-    We do not use H.264 or other video codecs because the main goal is to
-    measure the limits of lossless real-time compression of depth data.
-    Another goal is to be 2x smaller than the best published software (RVL).
+    Hardware acceleration for H.264 video compression is leveraged when
+    possible to reduce CPU usage during encoding and decoding.
+    To avoid using a lot of CPU time, a single encoder is used.
 
     Algorithm:
 
-    (1) Quantize depth based on sensor accuracy at range.
-    (2) Compress run-lengths of zeroes with Zstd.
-    (3) For each 8x8 block of the depth image, determine the best predictor.
-    (4) Zig-zag encode and compress the residuals with Zstd.
-
-    The predictors are similar to the way the PNG format works.
+    (1) Quantize depth to 11 bits based on sensor accuracy at range.
+    (2) Compress high 3 bits of each depth measurement with Zstd.
+    (3) Compress low 8 bits of each depth measurement with H.264.
 */
 
 #pragma once
@@ -53,7 +50,7 @@ namespace zdepth {
 static const uint8_t kDepthFormatMagic = 202; // 0xCA
 
 // Number of bytes in header
-static const int kDepthHeaderBytes = 40;
+static const int kDepthHeaderBytes = 24;
 
 /*
     File format:
@@ -66,14 +63,10 @@ static const int kDepthHeaderBytes = 40;
     2: <Frame Number (2 bytes)>
     4: <Width (2 bytes)>
     6: <Height (2 bytes)>
-    8: <Zeroes Uncompressed Bytes (4 bytes)>
-    12: <Zeroes Compressed Bytes (4 bytes)>
-    16: <Blocks Uncompressed Bytes (4 bytes)>
-    20: <Blocks Compressed Bytes (4 bytes)>
-    24: <Edges Uncompressed Bytes (4 bytes)>
-    28: <Edges Compressed Bytes (4 bytes)>
-    32: <Surfaces Uncompressed Bytes (4 bytes)>
-    36: <Surfaces Compressed Bytes (4 bytes)>
+    8: <High Uncompressed Bytes (4 bytes)>
+    12: <High Compressed Bytes (4 bytes)>
+    16: <Low Uncompressed Bytes (4 bytes)>
+    20: <Low Compressed Bytes (4 bytes)>
 
     Followed by compressed Zeroes, then Blocks, then Edges, then Surfaces.
 
@@ -99,59 +92,6 @@ const char* DepthResultString(DepthResult result);
 
 //------------------------------------------------------------------------------
 // Tools
-
-// Little-endian 16-bit read
-DEPTH_INLINE uint16_t ReadU16_LE(const void* data)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
-    return ((uint16_t)u8p[1] << 8) | u8p[0];
-#else
-    const uint16_t* word_ptr = reinterpret_cast<const uint16_t*>(data);
-    return *word_ptr;
-#endif
-}
-
-// Little-endian 32-bit read
-DEPTH_INLINE uint32_t ReadU32_LE(const void* data)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
-    return ((uint32_t)u8p[3] << 24) | ((uint32_t)u8p[2] << 16) | ((uint32_t)u8p[1] << 8) | u8p[0];
-#else
-    const uint32_t* u32p = reinterpret_cast<const uint32_t*>(data);
-    return *u32p;
-#endif
-}
-
-// Little-endian 16-bit write
-DEPTH_INLINE void WriteU16_LE(void* data, uint16_t value)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
-    u8p[1] = static_cast<uint8_t>(value >> 8);
-    u8p[0] = static_cast<uint8_t>(value);
-#else
-    uint16_t* word_ptr = reinterpret_cast<uint16_t*>(data);
-    *word_ptr = value;
-#endif
-}
-
-// Little-endian 32-bit write
-DEPTH_INLINE void WriteU32_LE(void* data, uint32_t value)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
-    u8p[3] = (uint8_t)(value >> 24);
-    u8p[2] = static_cast<uint8_t>(value >> 16);
-    u8p[1] = static_cast<uint8_t>(value >> 8);
-    u8p[0] = static_cast<uint8_t>(value);
-#else
-    uint32_t* word_ptr = reinterpret_cast<uint32_t*>(data);
-    *word_ptr = value;
-#endif
-}
-
 
 bool IsDepthFrame(const uint8_t* file_data, unsigned file_bytes);
 bool IsKeyFrame(const uint8_t* file_data, unsigned file_bytes);
@@ -259,27 +199,20 @@ protected:
     unsigned CurrentFrameIndex = 0;
     unsigned CompressedFrameNumber = 0;
 
-    // Accumulated through the end of the filtering then compressed separately
-    std::vector<uint16_t> Edges, Surfaces;
+    std::vector<uint8_t> High;
+    std::vector<uint8_t> Low;
 
-    // Block descriptors
-    std::vector<uint8_t> Zeroes, Blocks;
+    int High_UncompressedBytes = 0;
+    int Low_UncompressedBytes = 0;
 
-    int Zeroes_UncompressedBytes = 0;
-    int Surfaces_UncompressedBytes = 0;
-    int Blocks_UncompressedBytes = 0;
-    int Edges_UncompressedBytes = 0;
+    // Results of compression
+    std::vector<uint8_t> HighOut, LowOut;
 
-    // Results of zstd compression
-    std::vector<uint8_t> ZeroesOut, SurfacesOut, BlocksOut, EdgesOut;
-
-    // Packs the 16-bit overruns into 12-bit values and apply Zstd
-    std::vector<uint8_t> Packed;
-
+    // Video compressor used for low bits
     H264Codec H264;
 
 
-    void CompressImage(
+    void CompressHigh(
         int width,
         int height,
         const uint16_t* depth,
@@ -287,26 +220,14 @@ protected:
     bool DecompressImage(
         int width,
         int height,
-        uint16_t* depth,
-        const uint16_t* prev_depth);
+        const uint8_t* data,
+        int bytes);
 
     void WriteCompressedFile(
         int width,
         int height,
         bool keyframe,
         std::vector<uint8_t>& compressed);
-
-    void EncodeZeroes(
-        int width,
-        int height,
-        const uint16_t* depth);
-
-    // This writes the whole QuantizedDepth image with 0 or 1
-    // before the block decoding starts.
-    void DecodeZeroes(
-        int width,
-        int height,
-        uint16_t* depth);
 };
 
 

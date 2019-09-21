@@ -215,6 +215,30 @@ using namespace std;
 
 static zdepth::DepthCompressor compressor, decompressor;
 
+static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame)
+{
+    std::vector<unsigned> error_hist(128);
+
+    for (int i = 0; i < n; ++i) {
+        const int x = AzureKinectQuantizeDepth(depth[i]);
+        const int y = AzureKinectQuantizeDepth(frame[i]);
+        unsigned z = std::abs(x - y);
+        if (z == 0) {
+            continue;
+        }
+        if (z >= 128) {
+            z = 127;
+        }
+        error_hist[z] += z;
+    }
+
+    for (int i = 0; i < 128; ++i) {
+        cout << "Hist: " << i << " : " << error_hist[i] << endl;
+    }
+
+    return true;
+}
+
 bool TestFrame(const uint16_t* frame, bool keyframe)
 {
     std::vector<uint8_t> compressed;
@@ -242,11 +266,9 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
         return false;
     }
 
-    for (int i = 0; i < depth.size(); ++i) {
-        if (AzureKinectQuantizeDepth(depth[i]) != AzureKinectQuantizeDepth(frame[i])) {
-            cout << "Decompression failed: Contents did not match at offset = " << i << endl;
-            return false;
-        }
+    if (!CompareFrames(depth.size(), depth.data(), frame)) {
+        cout << "Decompression result corrupted" << endl;
+        return false;
     }
 
     const unsigned original_bytes = Width * Height * 2;
@@ -279,11 +301,9 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
     DequantizeDepthImage(Width, Height, quantized.data(), depth);
     const uint64_t t8 = GetTimeUsec();
 
-    for (int i = 0; i < depth.size(); ++i) {
-        if (AzureKinectQuantizeDepth(depth[i]) != AzureKinectQuantizeDepth(frame[i])) {
-            cout << "Decompression failed: Contents did not match at offset = " << i << endl;
-            return false;
-        }
+    if (!CompareFrames(depth.size(), depth.data(), frame)) {
+        cout << "Decompression result corrupted" << endl;
+        return false;
     }
 
     cout << endl;
