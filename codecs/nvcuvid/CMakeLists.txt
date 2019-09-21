@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
 project(nvcuvid LANGUAGES CXX)
 
+# On Windows this requires CUDA version 10.1.
+# Other platforms are not tested.
+
 
 ################################################################################
 # Dependencies
@@ -17,7 +20,7 @@ endif()
 set(LIB_SELECT "x64")
 
 if (WIN32)
-    set(NVCUVID_LIB "${CMAKE_SOURCE_DIR}/nvcuvid/vendored/${LIB_SELECT}/nvcuvid.lib")
+    set(NVCUVID_LIB "${CMAKE_CURRENT_LIST_DIR}/vendored/${LIB_SELECT}/nvcuvid.lib")
 else()
     find_library(NVCUVID_LIB
         NAMES
@@ -63,11 +66,13 @@ else()
     set(CMAKE_FIND_LIBRARY_SUFFIXES ".so")
 endif()
 
+# nvJPEG needs to be vendored because the CUDA Toolkit does not install it
+# in a predictable location.
 find_library(NVJPEG_DYNLIB
     NAMES
         nvjpeg64_10
     HINTS
-        "C:/Program Files/NVIDIA Corporation/Installer2/nvjpeg_10.1.{11DCEEFC-510C-4982-8AE1-29E17B8EDD87}/bin"
+        "${CMAKE_CURRENT_LIST_DIR}/vendored/${LIB_SELECT}"
     NO_CMAKE_SYSTEM_PATH
 )
 

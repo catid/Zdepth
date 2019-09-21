@@ -1,6 +1,7 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
 #include "zdepth.hpp"
+
 #include <zstd.h> // Zstd
 #include <string.h> // memcpy
 
@@ -435,42 +436,6 @@ void DepthCompressor::Compress(
     std::vector<uint8_t> lows(width * height + width * height / 2);
     for (int i = 0; i < width * height; ++i) {
         lows[i] = static_cast<uint8_t>( depth[i] );
-    }
-
-    if (!NvencEnabled)
-    {
-#define CUDA_CHECK(x) \
-    if ((x) < 0) { cout<<"FAIL" << endl; return; }
-
-        CUDA_CHECK(cuInit(0));
-        CUDA_CHECK(cuDeviceGetCount(&nGpu));
-        if (nGpu <= 0) {
-            cout << "FAIL" << endl;
-            return;
-        }
-        CUDA_CHECK(cuDeviceGet(&cuDevice, 0));
-        CUDA_CHECK(cudaGetDeviceProperties(&cuProperties, cuDevice));
-        CUDA_CHECK(cuCtxCreate(&cuContext, 0, cuDevice));
-
-        Encoder = std::make_shared<NvEncoderCuda>(
-            cuContext,
-            width,
-            height,
-            NV_ENC_BUFFER_FORMAT_NV12);
-
-        NV_ENC_INITIALIZE_PARAMS initializeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
-        NV_ENC_CONFIG encodeConfig = { NV_ENC_CONFIG_VER };
-        initializeParams.encodeConfig = &encodeConfig;
-
-        Encoder->CreateDefaultEncoderParams(
-            &initializeParams,
-            NV_ENC_CODEC_H264_GUID,
-            NV_ENC_PRESET_LOW_LATENCY_HQ_GUID);
-        // NV_ENC_PRESET_DEFAULT_GUID
-        // NV_ENC_PRESET_LOW_LATENCY_HP_GUID
-
-        Encoder->CreateEncoder(&initializeParams);
-        NvencEnabled = true;
     }
 
     const uint64_t ta = GetTimeUsec();

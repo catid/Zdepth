@@ -39,8 +39,8 @@ endif()
 if (NOT TARGET zstd)
     add_subdirectory(zstd zstd)
 endif()
-if (NOT TARGET nvcuvid)
-    add_subdirectory(nvcuvid nvcuvid)
+if (NOT TARGET codecs)
+    add_subdirectory(codecs codecs)
 endif()
 
 
@@ -69,7 +69,7 @@ add_library(zdepth::zdepth ALIAS zdepth)
 
 target_link_libraries(zdepth PUBLIC
     zstd
-    nvcuvid
+    codecs
 )
 
 target_include_directories(zdepth PUBLIC

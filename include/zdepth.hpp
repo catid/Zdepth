@@ -28,10 +28,6 @@
 #include <stdint.h>
 #include <vector>
 
-#include <NvEncoder.h>
-#include <NvEncoderCuda.h>
-#include <cuda_runtime_api.h>
-
 // Compiler-specific force inline keyword
 #if defined(_MSC_VER)
     #define DEPTH_INLINE inline __forceinline
@@ -44,6 +40,8 @@
     // Use aligned accesses on ARM
     #define DEPTH_ALIGNED_ACCESSES
 #endif // ANDROID
+
+#include "H264Codec.hpp"
 
 namespace zdepth {
 
@@ -232,36 +230,6 @@ bool ZstdDecompress(
 
 
 //------------------------------------------------------------------------------
-// Pack12
-
-/*
-    Pack12 Format Description:
-
-    This packing format is optimized for depth data compression.
-    Precondition: There are an even number of 12-bit values to write.
-
-    For N inputs the first N output bytes form the `packed0` plane.
-    The next N/2 output bytes form the `packed1` plane.
-
-    The `packed0` plane consists of the high 8 bytes of all the inputs.
-    The `packed1` plane consists of low bits of pairs of inputs.
-*/
-
-// Pad data with a zero entry to make its length even
-void Pad12(std::vector<uint16_t>& data);
-
-// Pack 12-bit fields into bytes for Zstd compression.
-// Input must be a multiple of two in size
-void Pack12(
-    const std::vector<uint16_t>& data,
-    std::vector<uint8_t>& packed);
-
-void Unpack12(
-    const std::vector<uint8_t>& packed,
-    std::vector<uint16_t>& data);
-
-
-//------------------------------------------------------------------------------
 // DepthCompressor
 
 class DepthCompressor
@@ -308,13 +276,7 @@ protected:
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
     std::vector<uint8_t> Packed;
 
-    // CUDA shared:
-    bool NvencEnabled = false;
-    int nGpu = 0;
-    CUdevice cuDevice = 0;
-    cudaDeviceProp cuProperties;
-    CUcontext cuContext = nullptr;
-    std::shared_ptr<NvEncoderCuda> Encoder;
+    H264Codec H264;
 
 
     void CompressImage(
