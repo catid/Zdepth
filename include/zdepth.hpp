@@ -148,13 +148,11 @@ uint16_t AzureKinectDequantizeDepth(uint16_t quantized);
 
 // Quantize depth for a whole image
 void QuantizeDepthImage(
-    int width,
-    int height,
+    int n,
     const uint16_t* depth,
     std::vector<uint16_t>& quantized);
 void DequantizeDepthImage(
-    int width,
-    int height,
+    int n,
     const uint16_t* quantized,
     std::vector<uint16_t>& depth);
 
@@ -215,12 +213,10 @@ protected:
     H264Codec H264[kParallelEncoders];
 
     void SplitLow(
-        int width,
-        int height,
+        int n,
         const uint16_t* depth);
     void CombineLow(
-        int width,
-        int height,
+        int n,
         const uint16_t* depth);
 
     void CompressHigh(
