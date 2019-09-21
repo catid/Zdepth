@@ -428,33 +428,46 @@ void DepthCompressor::Compress(
         prev_depth = QuantizedDepth[CurrentFrameIndex].data();
     }
 
+
+    // FIXME: Preprocess the High part based on previous frame
+
+    ZstdCompress(High, HighOut);
+    SplitLow(width, height, depth);
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        H264[i].EncodeBegin(width, height, keyframe, Low[i], LowOut[i]);
+    }
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        H264[i].EncodeFinish(LowOut[i]);
+    }
+    WriteCompressedFile(width, height, keyframe, compressed);
+}
+
+void DepthCompressor::SplitLow(
+    int width,
+    int height,
+    const uint16_t* depth)
+{
     // Split data into high/low parts
     const int n = width * height;
-    Low.resize(n + n / 2);
     High.resize(n / 2);
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        Low[i].resize(n + n / 2);
+    }
+
     for (int i = 0; i < n; i += 2) {
         const uint16_t depth_0 = depth[i];
         const uint16_t depth_1 = depth[i + 1];
         unsigned high_0 = 0, high_1 = 0;
         if (depth_0) {
-            high_0 = (depth_0 >> 8) - 1;
+            high_0 = (depth_0 >> 8) + 1;
         }
         if (depth_1) {
-            high_1 = (depth_1 >> 8) - 1;
+            high_1 = (depth_1 >> 8) + 1;
         }
         High[i / 2] = static_cast<uint8_t>( high_0 | (high_1 << 4) );
         Low[i] = static_cast<uint8_t>( depth_0 );
         Low[i + 1] = static_cast<uint8_t>( depth_1 );
     }
-
-    // FIXME: Preprocess the High part based on previous frame
-
-    ZstdCompress(High, HighOut);
-    H264.Encode(width, height, keyframe, Low, LowOut);
-    WriteCompressedFile(width, height, keyframe, compressed);
-
-    cout << "Lossless part: " << HighOut.size() << " bytes" << endl;
-    cout << "Lossy part: " << LowOut.size() << " bytes" << endl;
 }
 
 void DepthCompressor::WriteCompressedFile(
@@ -578,8 +591,8 @@ DepthResult DepthCompressor::Decompress(
         const uint8_t high = High[i / 2];
         const uint8_t low_0 = Low[i];
         const uint8_t low_1 = Low[i + 1];
-        unsigned high_0 = high >> 4;
-        unsigned high_1 = high & 15;
+        unsigned high_0 = high & 15;
+        unsigned high_1 = high >> 4;
         if (high_0 == 0) {
             depth[i] = 0;
         } else {

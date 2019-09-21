@@ -71,11 +71,13 @@ enum class VideoBackend
 class H264Codec
 {
 public:
-    bool Encode(
+    bool EncodeBegin(
         int width,
         int height,
         bool keyframe,
-        std::vector<uint8_t>& data,
+        const std::vector<uint8_t>& data,
+        std::vector<uint8_t>& compressed);
+    bool EncodeFinish(
         std::vector<uint8_t>& compressed);
 
     bool Decode(
@@ -98,11 +100,14 @@ protected:
     std::shared_ptr<NvDecoder> CudaDecoder;
 
     uint64_t NextTimestamp = 0;
+    std::vector<std::vector<uint8_t>> VideoTemp;
 
 
-    bool EncodeNvenc(
+    bool EncodeBeginNvenc(
         bool keyframe,
-        std::vector<uint8_t>& data,
+        const std::vector<uint8_t>& data,
+        std::vector<uint8_t>& compressed);
+    bool EncodeFinishNvenc(
         std::vector<uint8_t>& compressed);
     bool DecodeNvdec(
         const uint8_t* data,

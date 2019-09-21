@@ -54,11 +54,11 @@ void CudaContext::Destroy()
 //------------------------------------------------------------------------------
 // Video Codec : API
 
-bool H264Codec::Encode(
+bool H264Codec::EncodeBegin(
     int width,
     int height,
     bool keyframe,
-    std::vector<uint8_t>& data,
+    const std::vector<uint8_t>& data,
     std::vector<uint8_t>& compressed)
 {
     // If resolution changed:
@@ -70,7 +70,13 @@ bool H264Codec::Encode(
         Height = height;
     }
 
-    return EncodeNvenc(keyframe, data, compressed);
+    return EncodeBeginNvenc(keyframe, data, compressed);
+}
+
+bool H264Codec::EncodeFinish(
+    std::vector<uint8_t>& compressed)
+{
+    return EncodeFinishNvenc(compressed);
 }
 
 bool H264Codec::Decode(
@@ -96,9 +102,9 @@ bool H264Codec::Decode(
 //------------------------------------------------------------------------------
 // Video Codec : CUDA Backend
 
-bool H264Codec::EncodeNvenc(
+bool H264Codec::EncodeBeginNvenc(
     bool keyframe,
-    std::vector<uint8_t>& data,
+    const std::vector<uint8_t>& data,
     std::vector<uint8_t>& compressed)
 {
     try {
@@ -136,7 +142,7 @@ bool H264Codec::EncodeNvenc(
 
         NvEncoderCuda::CopyToDeviceFrame(
             Context.Context,
-            data.data(),
+            const_cast<uint8_t*>( data.data() ),
             0,
             (CUdeviceptr)frame->inputPtr,
             (int)frame->pitch,
@@ -167,26 +173,38 @@ bool H264Codec::EncodeNvenc(
 
         // Encode frame and wait for the result.
         // This takes under a millisecond on modern gaming laptops.
-        std::vector<std::vector<uint8_t>> video1;
-        std::vector<std::vector<uint8_t>> video2;
-        CudaEncoder->EncodeFrame(video1, &pic_params);
-        CudaEncoder->EndEncode(video2);
-
-        // If encode failed:
-        if (video1.empty() && video2.empty()) {
-            return false;
-        }
+        CudaEncoder->EncodeFrame(VideoTemp, &pic_params);
 
         compressed.clear();
         size_t size = 0;
-        for (auto& unit : video1)
+        for (auto& unit : VideoTemp)
         {
             const size_t unit_size = unit.size();
             compressed.resize(size + unit_size);
             memcpy(compressed.data() + size, unit.data(), unit_size);
             size += unit_size;
         }
-        for (auto& unit : video2)
+    }
+    catch (NVENCException& ex) {
+        return false;
+    }
+
+    return true;
+}
+
+bool H264Codec::EncodeFinishNvenc(
+    std::vector<uint8_t>& compressed)
+{
+    try {
+        CudaEncoder->EndEncode(VideoTemp);
+
+        // If encode failed:
+        if (VideoTemp.empty()) {
+            return false;
+        }
+
+        size_t size = compressed.size();
+        for (auto& unit : VideoTemp)
         {
             const size_t unit_size = unit.size();
             compressed.resize(size + unit_size);

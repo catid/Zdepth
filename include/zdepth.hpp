@@ -50,7 +50,10 @@ namespace zdepth {
 static const uint8_t kDepthFormatMagic = 202; // 0xCA
 
 // Number of bytes in header
-static const int kDepthHeaderBytes = 24;
+static const int kDepthHeaderBytes = 32;
+
+// Number of encoders to run in parallel
+static const int kParallelEncoders = 4;
 
 /*
     File format:
@@ -65,12 +68,13 @@ static const int kDepthHeaderBytes = 24;
     6: <Height (2 bytes)>
     8: <High Uncompressed Bytes (4 bytes)>
     12: <High Compressed Bytes (4 bytes)>
-    16: <Low Uncompressed Bytes (4 bytes)>
-    20: <Low Compressed Bytes (4 bytes)>
+    16: <Low0 Compressed Bytes (4 bytes)>
+    20: <Low1 Compressed Bytes (4 bytes)>
+    24: <Low2 Compressed Bytes (4 bytes)>
+    28: <Low3 Compressed Bytes (4 bytes)>
+    Followed by compressed data.
 
-    Followed by compressed Zeroes, then Blocks, then Edges, then Surfaces.
-
-    The compressed and uncompressed sizes are of packed data for Zstd.
+    The compressed and uncompressed sizes are of packed data for High,Low0-3.
 
     Flags = 1 for I-frames and 0 for P-frames.
     The P-frames are able to use predictors that reference the previous frame.
@@ -200,17 +204,24 @@ protected:
     unsigned CompressedFrameNumber = 0;
 
     std::vector<uint8_t> High;
-    std::vector<uint8_t> Low;
+    std::vector<uint8_t> Low[kParallelEncoders];
 
     int High_UncompressedBytes = 0;
-    int Low_UncompressedBytes = 0;
 
     // Results of compression
-    std::vector<uint8_t> HighOut, LowOut;
+    std::vector<uint8_t> HighOut, LowOut[kParallelEncoders];
 
     // Video compressor used for low bits
-    H264Codec H264;
+    H264Codec H264[kParallelEncoders];
 
+    void SplitLow(
+        int width,
+        int height,
+        const uint16_t* depth);
+    void CombineLow(
+        int width,
+        int height,
+        const uint16_t* depth);
 
     void CompressHigh(
         int width,

@@ -217,7 +217,7 @@ static zdepth::DepthCompressor compressor, decompressor;
 
 static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame)
 {
-    std::vector<unsigned> error_hist(128);
+    std::vector<unsigned> error_hist(512);
 
     for (int i = 0; i < n; ++i) {
         const int x = AzureKinectQuantizeDepth(depth[i]);
@@ -226,16 +226,18 @@ static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame
         if (z == 0) {
             continue;
         }
-        if (z >= 128) {
-            z = 127;
+        if (z >= 512) {
+            z = 511;
         }
         error_hist[z] += z;
     }
-
-    for (int i = 0; i < 128; ++i) {
-        cout << "Hist: " << i << " : " << error_hist[i] << endl;
+#if 0
+    for (int i = 0; i < 512; ++i) {
+        if (error_hist[i]) {
+            cout << "Hist: " << i << " : " << error_hist[i] << endl;
+        }
     }
-
+#endif
     return true;
 }
 
