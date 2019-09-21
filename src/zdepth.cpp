@@ -436,15 +436,23 @@ void DepthCompressor::Compress(
         const uint16_t depth_0 = depth[i];
         const uint16_t depth_1 = depth[i + 1];
         unsigned high_0 = 0, high_1 = 0;
+        uint8_t low_0 = static_cast<uint8_t>( depth_0 );
+        uint8_t low_1 = static_cast<uint8_t>( depth_1 );
         if (depth_0) {
-            high_0 = (depth_0 >> 8) - 1;
+            high_0 = (depth_0 >> 8) + 1;
+            if (high_0 & 1) {
+                low_0 = 255 - low_0;
+            }
         }
         if (depth_1) {
-            high_1 = (depth_1 >> 8) - 1;
+            high_1 = (depth_1 >> 8) + 1;
+            if (high_1 & 1) {
+                low_1 = 255 - low_1;
+            }
         }
         High[i / 2] = static_cast<uint8_t>( high_0 | (high_1 << 4) );
-        Low[i] = static_cast<uint8_t>( depth_0 );
-        Low[i + 1] = static_cast<uint8_t>( depth_1 );
+        Low[i] = low_0;
+        Low[i + 1] = low_1;
     }
 
     // FIXME: Preprocess the High part based on previous frame
@@ -576,19 +584,25 @@ DepthResult DepthCompressor::Decompress(
 
     for (int i = 0; i < n; i += 2) {
         const uint8_t high = High[i / 2];
-        const uint8_t low_0 = Low[i];
-        const uint8_t low_1 = Low[i + 1];
-        unsigned high_0 = high >> 4;
-        unsigned high_1 = high & 15;
+        uint8_t low_0 = Low[i];
+        uint8_t low_1 = Low[i + 1];
+        unsigned high_0 = high & 15;
+        unsigned high_1 = high >> 4;
         if (high_0 == 0) {
             depth[i] = 0;
         } else {
+            if (high_0 & 1) {
+                low_0 = 255 - low_0;
+            }
             high_0--;
             depth[i] = static_cast<uint16_t>(low_0 | (high_0 << 8));
         }
         if (high_1 == 0) {
             depth[i + 1] = 0;
         } else {
+            if (high_1 & 1) {
+                low_1 = 255 - low_1;
+            }
             high_1--;
             depth[i + 1] = static_cast<uint16_t>(low_1 | (high_1 << 8));
         }

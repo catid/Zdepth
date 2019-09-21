@@ -233,7 +233,9 @@ static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame
     }
 
     for (int i = 0; i < 128; ++i) {
-        cout << "Hist: " << i << " : " << error_hist[i] << endl;
+        if (error_hist[i]) {
+            cout << "Hist: " << i << " : " << error_hist[i] << endl;
+        }
     }
 
     return true;
@@ -301,9 +303,11 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
     DequantizeDepthImage(Width, Height, quantized.data(), depth);
     const uint64_t t8 = GetTimeUsec();
 
-    if (!CompareFrames(depth.size(), depth.data(), frame)) {
-        cout << "Decompression result corrupted" << endl;
-        return false;
+    for (int i = 0; i < n; ++i) {
+        if (AzureKinectQuantizeDepth(depth[i]) != AzureKinectQuantizeDepth(frame[i])) {
+            cout << "RVL bug" << endl;
+            return false;
+        }
     }
 
     cout << endl;
