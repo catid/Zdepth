@@ -28,6 +28,10 @@
 #include <stdint.h>
 #include <vector>
 
+#include <NvEncoder.h>
+#include <NvEncoderCuda.h>
+#include <cuda_runtime_api.h>
+
 // Compiler-specific force inline keyword
 #if defined(_MSC_VER)
     #define DEPTH_INLINE inline __forceinline
@@ -303,6 +307,14 @@ protected:
 
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
     std::vector<uint8_t> Packed;
+
+    // CUDA shared:
+    bool NvencEnabled = false;
+    int nGpu = 0;
+    CUdevice cuDevice = 0;
+    cudaDeviceProp cuProperties;
+    CUcontext cuContext = nullptr;
+    std::shared_ptr<NvEncoderCuda> Encoder;
 
 
     void CompressImage(

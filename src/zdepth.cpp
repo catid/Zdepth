@@ -4,7 +4,91 @@
 #include <zstd.h> // Zstd
 #include <string.h> // memcpy
 
+#ifdef _WIN32
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #include <windows.h>
+#elif __MACH__
+    #include <sys/file.h>
+    #include <mach/mach_time.h>
+    #include <mach/mach.h>
+    #include <mach/clock.h>
+
+    extern mach_port_t clock_port;
+#else
+    #include <time.h>
+    #include <sys/time.h>
+    #include <sys/file.h> // flock
+#endif
+
+#include <iostream>
+using namespace std;
+
 namespace zdepth {
+
+
+//------------------------------------------------------------------------------
+// Timing
+
+#ifdef _WIN32
+// Precomputed frequency inverse
+static double PerfFrequencyInverseUsec = 0.;
+static double PerfFrequencyInverseMsec = 0.;
+
+static void InitPerfFrequencyInverse()
+{
+    LARGE_INTEGER freq = {};
+    if (!::QueryPerformanceFrequency(&freq) || freq.QuadPart == 0) {
+        return;
+    }
+    const double invFreq = 1. / (double)freq.QuadPart;
+    PerfFrequencyInverseUsec = 1000000. * invFreq;
+    PerfFrequencyInverseMsec = 1000. * invFreq;
+}
+#elif __MACH__
+static bool m_clock_serv_init = false;
+static clock_serv_t m_clock_serv = 0;
+
+static void InitClockServ()
+{
+    m_clock_serv_init = true;
+    host_get_clock_service(mach_host_self(), SYSTEM_CLOCK, &m_clock_serv);
+}
+#endif // _WIN32
+
+uint64_t GetTimeUsec()
+{
+#ifdef _WIN32
+    LARGE_INTEGER timeStamp = {};
+    if (!::QueryPerformanceCounter(&timeStamp)) {
+        return 0;
+    }
+    if (PerfFrequencyInverseUsec == 0.) {
+        InitPerfFrequencyInverse();
+    }
+    return (uint64_t)(PerfFrequencyInverseUsec * timeStamp.QuadPart);
+#elif __MACH__
+    if (!m_clock_serv_init) {
+        InitClockServ();
+    }
+
+    mach_timespec_t tv;
+    clock_get_time(m_clock_serv, &tv);
+
+    return 1000000 * tv.tv_sec + tv.tv_nsec / 1000;
+#else
+    // This seems to be the best clock to used based on:
+    // http://btorpey.github.io/blog/2014/02/18/clock-sources-in-linux/
+    // The CLOCK_MONOTONIC_RAW seems to take a long time to query,
+    // and so it only seems useful for timing code that runs a small number of times.
+    // The CLOCK_MONOTONIC is affected by NTP at 500ppm but doesn't make sudden jumps.
+    // Applications should already be robust to clock skew so this is acceptable.
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<uint64_t>(ts.tv_nsec / 1000) + static_cast<uint64_t>(ts.tv_sec) * 1000000;
+#endif
+}
 
 
 //------------------------------------------------------------------------------
@@ -348,6 +432,95 @@ void DepthCompressor::Compress(
     // Get depth for previous frame
     const uint16_t* depth = QuantizedDepth[CurrentFrameIndex].data();
 
+    std::vector<uint8_t> lows(width * height + width * height / 2);
+    for (int i = 0; i < width * height; ++i) {
+        lows[i] = static_cast<uint8_t>( depth[i] );
+    }
+
+    if (!NvencEnabled)
+    {
+#define CUDA_CHECK(x) \
+    if ((x) < 0) { cout<<"FAIL" << endl; return; }
+
+        CUDA_CHECK(cuInit(0));
+        CUDA_CHECK(cuDeviceGetCount(&nGpu));
+        if (nGpu <= 0) {
+            cout << "FAIL" << endl;
+            return;
+        }
+        CUDA_CHECK(cuDeviceGet(&cuDevice, 0));
+        CUDA_CHECK(cudaGetDeviceProperties(&cuProperties, cuDevice));
+        CUDA_CHECK(cuCtxCreate(&cuContext, 0, cuDevice));
+
+        Encoder = std::make_shared<NvEncoderCuda>(
+            cuContext,
+            width,
+            height,
+            NV_ENC_BUFFER_FORMAT_NV12);
+
+        NV_ENC_INITIALIZE_PARAMS initializeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
+        NV_ENC_CONFIG encodeConfig = { NV_ENC_CONFIG_VER };
+        initializeParams.encodeConfig = &encodeConfig;
+
+        Encoder->CreateDefaultEncoderParams(
+            &initializeParams,
+            NV_ENC_CODEC_H264_GUID,
+            NV_ENC_PRESET_LOW_LATENCY_HQ_GUID);
+        // NV_ENC_PRESET_DEFAULT_GUID
+        // NV_ENC_PRESET_LOW_LATENCY_HP_GUID
+
+        Encoder->CreateEncoder(&initializeParams);
+        NvencEnabled = true;
+    }
+
+    const uint64_t ta = GetTimeUsec();
+
+    const NvEncInputFrame* encoderInputFrame = Encoder->GetNextInputFrame();
+    NvEncoderCuda::CopyToDeviceFrame(
+        cuContext,
+        lows.data(),
+        0,
+        (CUdeviceptr)encoderInputFrame->inputPtr,
+        (int)encoderInputFrame->pitch,
+        width,
+        height, 
+        CU_MEMORYTYPE_HOST, 
+        encoderInputFrame->bufferFormat,
+        encoderInputFrame->chromaOffsets,
+        encoderInputFrame->numChromaPlanes);
+
+    std::vector<std::vector<uint8_t>> video;
+    Encoder->EncodeFrame(video);
+    std::vector<std::vector<uint8_t>> video2;
+    Encoder->EndEncode(video2);
+
+    const uint64_t tb = GetTimeUsec();
+
+    for (auto& v : video)
+    {
+        cout << "encode frame: " << v.size() << " bytes in " << (tb - ta) / 1000.f << " msec" << endl;
+    }
+    for (auto& v : video2)
+    {
+        cout << "encode frame: " << v.size() << " bytes in " << (tb - ta) / 1000.f << " msec" << endl;
+    }
+
+    std::vector<uint8_t> test, output;
+
+    test.resize(width * height / 2);
+
+    for (int i = 0; i < width * height; i += 2) {
+        test[i/2] = (depth[i] >> 8) | ((depth[i + 1] >> 8) << 4);
+    }
+
+    ZstdCompress(test, output);
+
+    cout << "Lossless part: " << output.size() << " bytes" << endl;
+
+
+
+
+
     CurrentFrameIndex = (CurrentFrameIndex + 1) % 2;
     const uint16_t* prev_depth = nullptr;
     if (!keyframe) {
@@ -377,6 +550,11 @@ void DepthCompressor::Compress(
     ZstdCompress(Blocks, BlocksOut);
 
     WriteCompressedFile(width, height, keyframe, compressed);
+
+    cout << "Surfaces_UncompressedBytes = " << Surfaces_UncompressedBytes << endl;
+    cout << "Edges_UncompressedBytes = " << Edges_UncompressedBytes << endl;
+    cout << "Zeroes_UncompressedBytes = " << Zeroes_UncompressedBytes << endl;
+    cout << "Blocks_UncompressedBytes = " << Blocks_UncompressedBytes << endl;
 }
 
 void DepthCompressor::CompressImage(

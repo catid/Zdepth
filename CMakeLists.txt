@@ -39,6 +39,9 @@ endif()
 if (NOT TARGET zstd)
     add_subdirectory(zstd zstd)
 endif()
+if (NOT TARGET nvcuvid)
+    add_subdirectory(nvcuvid nvcuvid)
+endif()
 
 
 ################################################################################
@@ -64,7 +67,10 @@ include_directories(include)
 add_library(zdepth STATIC ${SOURCE_FILES})
 add_library(zdepth::zdepth ALIAS zdepth)
 
-target_link_libraries(zdepth PUBLIC zstd)
+target_link_libraries(zdepth PUBLIC
+    zstd
+    nvcuvid
+)
 
 target_include_directories(zdepth PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
