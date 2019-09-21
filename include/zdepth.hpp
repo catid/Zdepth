@@ -11,13 +11,37 @@
 
     Hardware acceleration for H.264 video compression is leveraged when
     possible to reduce CPU usage during encoding and decoding.
-    To avoid using a lot of CPU time, a single encoder is used.
+    Since the depth images are small, it is possible to encode quickly
+    and use multiple H.264 encoders 
 
-    Algorithm:
+    The main departure is in losslessly compressing the high bits.
+
+    Compression algorithm:
 
     (1) Quantize depth to 11 bits based on sensor accuracy at range.
-    (2) Compress high 3 bits of each depth measurement with Zstd.
-    (3) Compress low 8 bits of each depth measurement with H.264.
+    (2) Rescale the data so that it ranges from 0 to 2047.
+    (3) Compress high 3 bits of reach depth measurement:
+        Predict that next will match the larger of up/left.
+            This produces values that range from -7..+7
+        Zig-zag encode the residuals to a range of 1..15.
+            Use special value 0 to indicate no depth data.
+        Combine 4-bit nibbles together into bytes.
+        Compress with Zstd.
+    (4) Compress low 8 bits of each depth measurement with H.264.
+        Split the data based on the low two bits of the high bits.
+        For each split:
+            Rescale the data so it ranges from 0..255.
+            Compress the resulting data as an image with H.264.
+
+    This is based on the research of:
+
+    F. Nenci, L. Spinello and C. Stachniss,
+    "Effective compression of range data streams for remote robot operations
+    using H.264," 2014 IEEE/RSJ International Conference on Intelligent Robots
+    and Systems, Chicago, IL, 2014, pp. 3794-3799.
+
+    Uses libdivide: https://github.com/ridiculousfish/libdivide
+    Uses Zstd: https://github.com/facebook/zstd
 */
 
 #pragma once
@@ -49,8 +73,13 @@ namespace zdepth {
 // First byte of the file format
 static const uint8_t kDepthFormatMagic = 202; // 0xCA
 
+enum DepthFlags
+{
+    DepthFlags_Keyframe = 1,
+};
+
 // Number of bytes in header
-static const int kDepthHeaderBytes = 32;
+static const int kDepthHeaderBytes = 44;
 
 // Number of encoders to run in parallel
 static const int kParallelEncoders = 4;
@@ -66,12 +95,22 @@ static const int kParallelEncoders = 4;
     2: <Frame Number (2 bytes)>
     4: <Width (2 bytes)>
     6: <Height (2 bytes)>
-    8: <High Uncompressed Bytes (4 bytes)>
-    12: <High Compressed Bytes (4 bytes)>
-    16: <Low0 Compressed Bytes (4 bytes)>
-    20: <Low1 Compressed Bytes (4 bytes)>
-    24: <Low2 Compressed Bytes (4 bytes)>
-    28: <Low3 Compressed Bytes (4 bytes)>
+    8: <Minimum Depth (2 bytes)>
+    10: <Maximum Depth (2 bytes)>
+    12: <High Uncompressed Bytes (4 bytes)>
+    16: <High Compressed Bytes (4 bytes)>
+    20: <Low0 Compressed Bytes (4 bytes)>
+    24: <Low1 Compressed Bytes (4 bytes)>
+    28: <Low2 Compressed Bytes (4 bytes)>
+    32: <Low3 Compressed Bytes (4 bytes)>
+    36: <Low0 Minimum (1 byte)>
+    37: <Low0 Maximum (1 byte)>
+    38: <Low1 Minimum (1 byte)>
+    39: <Low1 Maximum (1 byte)>
+    40: <Low2 Minimum (1 byte)>
+    41: <Low2 Maximum (1 byte)>
+    42: <Low3 Minimum (1 byte)>
+    43: <Low3 Maximum (1 byte)>
     Followed by compressed data.
 
     The compressed and uncompressed sizes are of packed data for High,Low0-3.
@@ -81,6 +120,27 @@ static const int kParallelEncoders = 4;
     The decoder keeps track of the previously decoded Frame Number and rejects
     frames that cannot be decoded due to a missing previous frame.
 */
+
+#pragma pack(push)
+#pragma pack(1)
+
+struct DepthHeader
+{
+    uint8_t Magic;
+    uint8_t Flags;
+    uint16_t FrameNumber;
+    uint16_t Width;
+    uint16_t Height;
+    uint16_t MinimumDepth;
+    uint16_t MaximumDepth;
+    uint32_t HighUncompressedBytes;
+    uint32_t HighCompressedBytes;
+    uint32_t LowCompressedBytes[kParallelEncoders];
+    uint8_t LowMinimum[kParallelEncoders];
+    uint8_t LowMaximum[kParallelEncoders];
+};
+
+#pragma pack(pop)
 
 enum class DepthResult
 {
@@ -158,6 +218,46 @@ void DequantizeDepthImage(
 
 
 //------------------------------------------------------------------------------
+// Depth Rescaling
+
+/*
+    The purpose of doing depth rescaling is for the benefit of accuracy in the
+    H.264 lossy encoder.  If the whole scene does not contain any data far away
+    then some of the video encoders will go unused unless we rescale the scene.
+*/
+
+// Rescale depth for a whole image to the range of 0..2047.
+// This modifies the data in-place.
+// Returns the minimum and maximum values in the data, needed for the decoder.
+void RescaleImage_11Bits(
+    std::vector<uint16_t>& quantized,
+    uint16_t& min_value,
+    uint16_t& max_value);
+
+// Undo image rescaling.
+// This modifies the data in-place.
+void UndoRescaleImage_11Bits(
+    uint16_t min_value,
+    uint16_t max_value,
+    std::vector<uint16_t>& quantized);
+
+// Rescale depth for a whole image to the range of 0..255.
+// This modifies the data in-place.
+// Returns the minimum and maximum values in the data, needed for the decoder.
+void RescaleImage_8Bits(
+    std::vector<uint8_t>& quantized,
+    uint8_t& min_value,
+    uint8_t& max_value);
+
+// Undo image rescaling.
+// This modifies the data in-place.
+void UndoRescaleImage_8Bits(
+    uint8_t min_value,
+    uint8_t max_value,
+    std::vector<uint8_t>& quantized);
+
+
+//------------------------------------------------------------------------------
 // Zstd
 
 void ZstdCompress(
@@ -196,15 +296,12 @@ public:
         std::vector<uint16_t>& depth_out);
 
 protected:
-    // Depth values quantized for current and last frame
-    std::vector<uint16_t> QuantizedDepth[2];
-    unsigned CurrentFrameIndex = 0;
+    // Depth values quantized
+    std::vector<uint16_t> QuantizedDepth;
     unsigned CompressedFrameNumber = 0;
 
     std::vector<uint8_t> High;
     std::vector<uint8_t> Low[kParallelEncoders];
-
-    int High_UncompressedBytes = 0;
 
     // Results of compression
     std::vector<uint8_t> HighOut, LowOut[kParallelEncoders];
@@ -212,29 +309,16 @@ protected:
     // Video compressor used for low bits
     H264Codec H264[kParallelEncoders];
 
-    void SplitLow(
-        int n,
-        const uint16_t* depth);
-    void CombineLow(
-        int n,
-        const uint16_t* depth);
 
-    void CompressHigh(
-        int width,
-        int height,
-        const uint16_t* depth,
-        const uint16_t* prev_depth);
-    bool DecompressImage(
-        int width,
-        int height,
-        const uint8_t* data,
-        int bytes);
-
-    void WriteCompressedFile(
-        int width,
-        int height,
-        bool keyframe,
-        std::vector<uint8_t>& compressed);
+    // Transform the data for compression by Zstd/H.264
+    void Filter(
+        int n,
+        int stride,
+        const uint16_t* depth);
+    void Unfilter(
+        int n,
+        int stride,
+        const uint16_t* depth);
 };
 
 

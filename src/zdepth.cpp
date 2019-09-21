@@ -2,6 +2,8 @@
 
 #include "zdepth.hpp"
 
+#include "libdivide.h"
+
 #include <zstd.h> // Zstd
 #include <string.h> // memcpy
 
@@ -119,58 +121,6 @@ const char* DepthResultString(DepthResult result)
 //------------------------------------------------------------------------------
 // Tools
 
-// Little-endian 16-bit read
-DEPTH_INLINE uint16_t ReadU16_LE(const void* data)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
-    return ((uint16_t)u8p[1] << 8) | u8p[0];
-#else
-    const uint16_t* word_ptr = reinterpret_cast<const uint16_t*>(data);
-    return *word_ptr;
-#endif
-}
-
-// Little-endian 32-bit read
-DEPTH_INLINE uint32_t ReadU32_LE(const void* data)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    const uint8_t* u8p = reinterpret_cast<const uint8_t*>(data);
-    return ((uint32_t)u8p[3] << 24) | ((uint32_t)u8p[2] << 16) | ((uint32_t)u8p[1] << 8) | u8p[0];
-#else
-    const uint32_t* u32p = reinterpret_cast<const uint32_t*>(data);
-    return *u32p;
-#endif
-}
-
-// Little-endian 16-bit write
-DEPTH_INLINE void WriteU16_LE(void* data, uint16_t value)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
-    u8p[1] = static_cast<uint8_t>(value >> 8);
-    u8p[0] = static_cast<uint8_t>(value);
-#else
-    uint16_t* word_ptr = reinterpret_cast<uint16_t*>(data);
-    *word_ptr = value;
-#endif
-}
-
-// Little-endian 32-bit write
-DEPTH_INLINE void WriteU32_LE(void* data, uint32_t value)
-{
-#ifdef DEPTH_ALIGNED_ACCESSES
-    uint8_t* u8p = reinterpret_cast<uint8_t*>(data);
-    u8p[3] = (uint8_t)(value >> 24);
-    u8p[2] = static_cast<uint8_t>(value >> 16);
-    u8p[1] = static_cast<uint8_t>(value >> 8);
-    u8p[0] = static_cast<uint8_t>(value);
-#else
-    uint32_t* word_ptr = reinterpret_cast<uint32_t*>(data);
-    *word_ptr = value;
-#endif
-}
-
 bool IsDepthFrame(const uint8_t* file_data, unsigned file_bytes)
 {
     if (file_bytes < kDepthHeaderBytes) {
@@ -268,24 +218,135 @@ void DequantizeDepthImage(
 
 
 //------------------------------------------------------------------------------
-// Depth Predictors
+// Depth Rescaling
 
-// Supported predictor functions
-enum PredictorTypes
+void RescaleImage_11Bits(
+    std::vector<uint16_t>& quantized,
+    uint16_t& min_value,
+    uint16_t& max_value)
 {
-    PredictorType_Larger,
-    PredictorType_Up,
-    PredictorType_Left,
-    PredictorType_UpTrend,
-    PredictorType_LeftTrend,
-    PredictorType_Average,
+    uint16_t* data = quantized.data();
+    const int size = static_cast<int>( quantized.size() );
 
-    // The following predictor types sample the previous frame:
-    PredictorType_PrevFrame,
+    // Find extrema
+    unsigned smallest = data[0];
+    unsigned largest = smallest;
+    for (int i = 1; i < size; ++i) {
+        const unsigned x = data[i];
+        if (smallest > x) {
+            smallest = x;
+        }
+        if (largest < x) {
+            largest = x;
+        }
+    }
 
-    // Number of predictors implemented
-    PredictorType_Count
-};
+    const unsigned range = largest - smallest;
+    if (range == 0) {
+        return;
+    }
+    const unsigned rounder = range / 2;
+
+    libdivide::divider<unsigned, libdivide::BRANCHFREE> fast_d(range);
+
+    // Rescale the data
+    for (int i = 0; i < size; ++i) {
+        const unsigned x = data[i] - smallest;
+        unsigned y = (x * 2048 + rounder) / fast_d;
+        data[i] = static_cast<uint16_t>(y);
+    }
+
+    min_value = static_cast<uint16_t>( smallest );
+    max_value = static_cast<uint16_t>( largest );
+}
+
+void UndoRescaleImage_11Bits(
+    uint16_t min_value,
+    uint16_t max_value,
+    std::vector<uint16_t>& quantized)
+{
+    uint16_t* data = quantized.data();
+    const int size = static_cast<int>( quantized.size() );
+
+    const unsigned smallest = min_value;
+    const unsigned range = max_value - smallest;
+    if (range == 0) {
+        return;
+    }
+
+    // Rescale the data
+    for (int i = 0; i < size; ++i) {
+        unsigned x = data[i];
+        const unsigned y = (x * range + 1024) / 2048;
+        data[i] = static_cast<uint16_t>(y);
+    }
+}
+
+void RescaleImage_8Bits(
+    std::vector<uint8_t>& quantized,
+    uint8_t& min_value,
+    uint8_t& max_value)
+{
+    uint8_t* data = quantized.data();
+    const int size = static_cast<int>( quantized.size() );
+
+    // Find extrema
+    unsigned smallest = data[0];
+    unsigned largest = smallest;
+    for (int i = 1; i < size; ++i) {
+        const unsigned x = data[i];
+        if (smallest > x) {
+            smallest = x;
+        }
+        if (largest < x) {
+            largest = x;
+        }
+    }
+
+    const unsigned range = largest - smallest;
+    if (range == 0) {
+        return;
+    }
+    const unsigned rounder = range / 2;
+
+    libdivide::divider<unsigned, libdivide::BRANCHFREE> fast_d(range);
+
+    // Rescale the data
+    for (int i = 0; i < size; ++i) {
+        const unsigned x = data[i] - smallest;
+        unsigned y = (x * 256 + rounder) / fast_d;
+        data[i] = static_cast<uint8_t>(y);
+    }
+
+    min_value = static_cast<uint8_t>( smallest );
+    max_value = static_cast<uint8_t>( largest );
+}
+
+void UndoRescaleImage_8Bits(
+    uint8_t min_value,
+    uint8_t max_value,
+    std::vector<uint8_t>& quantized)
+{
+    uint8_t* data = quantized.data();
+    const int size = static_cast<int>( quantized.size() );
+
+    const unsigned smallest = min_value;
+    const unsigned range = max_value - smallest;
+    if (range == 0) {
+        return;
+    }
+
+    // Rescale the data
+    for (int i = 0; i < size; ++i) {
+        unsigned x = data[i];
+        const unsigned y = (x * range + 128) / 256;
+        data[i] = static_cast<uint8_t>(y);
+    }
+}
+
+
+//------------------------------------------------------------------------------
+// Depth Predictors
 
 static inline unsigned ApplyPrediction(int depth, int prediction)
 {
@@ -308,48 +369,6 @@ static inline int UndoPrediction(unsigned zigzag, int prediction)
 static inline int Predict_Larger(int left0, int up0)
 {
     return left0 > up0 ? left0 : up0;
-}
-
-static inline int Predict_Up(int left0, int up0)
-{
-    return up0 != 0 ? up0 : left0;
-}
-
-static inline int Predict_Left(int left0, int up0)
-{
-    return left0 != 0 ? left0 : up0;
-}
-
-static inline int Predict_UpTrend(int left0, int up0, int up1)
-{
-    if (up0 && up1) {
-        return 2 * up0 - up1;
-    }
-    return Predict_Larger(left0, up0);
-}
-
-static inline int Predict_LeftTrend(int left0, int left1, int up0)
-{
-    if (left0 && left1) {
-        return 2 * left0 - left1;
-    }
-    return Predict_Larger(left0, up0);
-}
-
-static inline int Predict_Average(int left0, int up0)
-{
-    if (left0 && up0) {
-        return (left0 + up0) / 2;
-    }
-    return Predict_Larger(left0, up0);
-}
-
-static inline int Predict_PrevFrame(int prev0, int left0, int up0)
-{
-    if (prev0) {
-        return prev0;
-    }
-    return Predict_Larger(left0, up0);
 }
 
 
@@ -406,6 +425,15 @@ void DepthCompressor::Compress(
     std::vector<uint8_t>& compressed,
     bool keyframe)
 {
+    DepthHeader header;
+    header.Magic = kDepthFormatMagic;
+    header.Flags = 0;
+    if (keyframe) {
+        header.Flags |= DepthFlags_Keyframe;
+    }
+    header.Width = static_cast<uint16_t>( width );
+    header.Height = static_cast<uint16_t>( height );
+
     const int n = width * height;
 
     // Enforce keyframe if we have not compressed anything yet
@@ -413,34 +441,141 @@ void DepthCompressor::Compress(
         keyframe = true;
     }
     ++CompressedFrameNumber;
+    header.FrameNumber = static_cast<uint16_t>( CompressedFrameNumber++ );
 
     // Quantize the depth image
-    QuantizeDepthImage(n, unquantized_depth, QuantizedDepth[CurrentFrameIndex]);
+    QuantizeDepthImage(n, unquantized_depth, QuantizedDepth);
 
-    // Get depth for previous frame
-    const uint16_t* depth = QuantizedDepth[CurrentFrameIndex].data();
+    // Rescale depth image to 0...2047
+    RescaleImage_11Bits(QuantizedDepth, header.MinimumDepth, header.MaximumDepth);
 
-    CurrentFrameIndex = (CurrentFrameIndex + 1) % 2;
-    const uint16_t* prev_depth = nullptr;
-    if (!keyframe) {
-        prev_depth = QuantizedDepth[CurrentFrameIndex].data();
+    Filter(n, width, QuantizedDepth.data());
+
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        RescaleImage_8Bits(Low[i], header.LowMinimum[i], header.LowMaximum[i]);
     }
 
-
-    // FIXME: Preprocess the High part based on previous frame
-
     ZstdCompress(High, HighOut);
-    SplitLow(n, depth);
+
+    header.HighUncompressedBytes = static_cast<uint32_t>( High.size() );
+    header.HighCompressedBytes = static_cast<uint32_t>( HighOut.size() );
+
     for (int i = 0; i < kParallelEncoders; ++i) {
         H264[i].EncodeBegin(width, height, keyframe, Low[i], LowOut[i]);
     }
     for (int i = 0; i < kParallelEncoders; ++i) {
         H264[i].EncodeFinish(LowOut[i]);
+
+        header.LowCompressedBytes[i] = static_cast<uint32_t>( LowOut[i].size() );
     }
-    WriteCompressedFile(width, height, keyframe, compressed);
+
+    // Calculate output size
+    size_t total_size = kDepthHeaderBytes + HighOut.size();
+    for (auto& low : LowOut) {
+        total_size += low.size();
+    }
+    compressed.resize(total_size);
+    uint8_t* copy_dest = compressed.data();
+
+    // Write header
+    memcpy(copy_dest, &header, kDepthHeaderBytes);
+    copy_dest += kDepthHeaderBytes;
+
+    // Concatenate the compressed data
+    memcpy(copy_dest, HighOut.data(), HighOut.size());
+    copy_dest += HighOut.size();
+    for (auto& low : LowOut) {
+        memcpy(copy_dest, low.data(), low.size());
+        copy_dest += low.size();
+    }
 }
 
-void DepthCompressor::SplitLow(
+DepthResult DepthCompressor::Decompress(
+    const std::vector<uint8_t>& compressed,
+    int& width,
+    int& height,
+    std::vector<uint16_t>& depth_out)
+{
+    if (compressed.size() < kDepthHeaderBytes) {
+        return DepthResult::FileTruncated;
+    }
+    const uint8_t* src = compressed.data();
+
+    const DepthHeader* header = reinterpret_cast<const DepthHeader*>( src );
+    if (header->Magic != kDepthFormatMagic) {
+        return DepthResult::WrongFormat;
+    }
+    const bool keyframe = (header->Flags & DepthFlags_Keyframe) != 0;
+    const unsigned frame_number = header->FrameNumber;
+
+    if (!keyframe && frame_number != CompressedFrameNumber + 1) {
+        return DepthResult::MissingPFrame;
+    }
+    CompressedFrameNumber = frame_number;
+
+    width = header->Width;
+    height = header->Height;
+    if (width < 1 || width > 4096 || height < 1 || height > 4096) {
+        return DepthResult::Corrupted;
+    }
+
+    // Get depth for previous frame
+    const int n = width * height;
+    QuantizedDepth.resize(n);
+    uint16_t* depth = QuantizedDepth.data();
+
+    // Read header
+    High_UncompressedBytes = ReadU32_LE(src + 8);
+    const unsigned High_CompressedBytes = ReadU32_LE(src + 12);
+    unsigned total_bytes = kDepthHeaderBytes + High_CompressedBytes;
+    unsigned Low_CompressedBytes[kParallelEncoders];
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        Low_CompressedBytes[i] = ReadU32_LE(src + 16 + i * 4);
+        total_bytes += Low_CompressedBytes[i];
+    }
+    if (High_UncompressedBytes < 2) {
+        return DepthResult::Corrupted;
+    }
+    if (compressed.size() != total_bytes) {
+        return DepthResult::FileTruncated;
+    }
+    const uint8_t* High_Data = src + kDepthHeaderBytes;
+    const uint8_t* Low_Data = High_Data + High_CompressedBytes;
+
+    // Compress high bits
+    bool success = ZstdDecompress(
+        High_Data,
+        High_CompressedBytes,
+        High_UncompressedBytes,
+        High);
+    if (!success) {
+        return DepthResult::Corrupted;
+    }
+
+    // Decompress low bits
+    for (int i = 0; i < kParallelEncoders; ++i) {
+        success = H264[i].Decode(
+            width,
+            height,
+            Low_Data,
+            Low_CompressedBytes[i],
+            Low[i]);
+        if (!success) {
+            return DepthResult::Corrupted;
+        }
+    }
+
+    Unfilter(n, depth);
+
+    DequantizeDepthImage(n, depth, depth_out);
+    return DepthResult::Success;
+}
+
+
+//------------------------------------------------------------------------------
+// DepthCompressor : Filtering
+
+void DepthCompressor::Filter(
     int n,
     const uint16_t* depth)
 {
@@ -474,142 +609,7 @@ void DepthCompressor::SplitLow(
     }
 }
 
-void DepthCompressor::WriteCompressedFile(
-    int width,
-    int height,
-    bool keyframe,
-    std::vector<uint8_t>& compressed)
-{
-    size_t total_size = 0;
-    for (auto& low : LowOut) {
-        total_size += low.size();
-    }
-
-    compressed.resize(
-        kDepthHeaderBytes +
-        HighOut.size() +
-        total_size);
-    uint8_t* copy_dest = compressed.data();
-
-    // Write header
-    copy_dest[0] = kDepthFormatMagic;
-
-    uint8_t flags = 0;
-    if (keyframe) {
-        flags |= 1;
-    }
-    copy_dest[1] = flags;
-
-    WriteU16_LE(copy_dest + 2, static_cast<uint16_t>( CompressedFrameNumber ));
-    WriteU16_LE(copy_dest + 4, static_cast<uint16_t>( width ));
-    WriteU16_LE(copy_dest + 6, static_cast<uint16_t>( height ));
-    WriteU32_LE(copy_dest + 8, static_cast<uint32_t>( High.size() ));
-    WriteU32_LE(copy_dest + 12, static_cast<uint32_t>( HighOut.size() ));
-    for (int i = 0; i < kParallelEncoders; ++i) {
-        WriteU32_LE(copy_dest + 16 + i * 4, static_cast<uint32_t>( LowOut[i].size() ));
-    }
-    copy_dest += kDepthHeaderBytes;
-
-    // Concatenate the compressed data
-    memcpy(copy_dest, HighOut.data(), HighOut.size());
-    copy_dest += HighOut.size();
-    for (int i = 0; i < kParallelEncoders; ++i) {
-        memcpy(copy_dest, LowOut[i].data(), LowOut[i].size());
-        copy_dest += LowOut[i].size();
-    }
-}
-
-DepthResult DepthCompressor::Decompress(
-    const std::vector<uint8_t>& compressed,
-    int& width,
-    int& height,
-    std::vector<uint16_t>& depth_out)
-{
-    if (compressed.size() < kDepthHeaderBytes) {
-        return DepthResult::FileTruncated;
-    }
-    const uint8_t* src = compressed.data();
-    if (src[0] != kDepthFormatMagic) {
-        return DepthResult::WrongFormat;
-    }
-    bool keyframe = (src[1] & 1) != 0;
-    const unsigned frame_number = ReadU16_LE(src + 2);
-
-    if (!keyframe && frame_number != CompressedFrameNumber + 1) {
-        return DepthResult::MissingPFrame;
-    }
-    CompressedFrameNumber = frame_number;
-
-    width = ReadU16_LE(src + 4);
-    height = ReadU16_LE(src + 6);
-    if (width < 1 || width > 4096 || height < 1 || height > 4096) {
-        return DepthResult::Corrupted;
-    }
-
-    // Get depth for previous frame
-    const int n = width * height;
-    QuantizedDepth[CurrentFrameIndex].resize(n);
-    uint16_t* depth = QuantizedDepth[CurrentFrameIndex].data();
-    CurrentFrameIndex = (CurrentFrameIndex + 1) % 2;
-    uint16_t* prev_depth = nullptr;
-    if (!keyframe) {
-        if (QuantizedDepth[CurrentFrameIndex].size() != static_cast<size_t>( n )) {
-            return DepthResult::MissingPFrame;
-        }
-        prev_depth = QuantizedDepth[CurrentFrameIndex].data();
-    }
-
-    High_UncompressedBytes = ReadU32_LE(src + 8);
-    const unsigned High_CompressedBytes = ReadU32_LE(src + 12);
-
-    unsigned total_bytes = kDepthHeaderBytes + High_CompressedBytes;
-    unsigned Low_CompressedBytes[kParallelEncoders];
-    for (int i = 0; i < kParallelEncoders; ++i) {
-        Low_CompressedBytes[i] = ReadU32_LE(src + 16 + i * 4);
-        total_bytes += Low_CompressedBytes[i];
-    }
-
-    if (High_UncompressedBytes < 2) {
-        return DepthResult::Corrupted;
-    }
-
-    if (compressed.size() != total_bytes) {
-        return DepthResult::FileTruncated;
-    }
-
-    const uint8_t* High_Data = src + kDepthHeaderBytes;
-    const uint8_t* Low_Data = High_Data + High_CompressedBytes;
-
-    bool success = ZstdDecompress(
-        High_Data,
-        High_CompressedBytes,
-        High_UncompressedBytes,
-        High);
-    if (!success) {
-        return DepthResult::Corrupted;
-    }
-
-    // FIXME: Decode
-
-    for (int i = 0; i < kParallelEncoders; ++i) {
-        success = H264[i].Decode(
-            width,
-            height,
-            Low_Data,
-            Low_CompressedBytes[i],
-            Low[i]);
-        if (!success) {
-            return DepthResult::Corrupted;
-        }
-    }
-
-    CombineLow(n, depth);
-
-    DequantizeDepthImage(n, depth, depth_out);
-    return DepthResult::Success;
-}
-
-void DepthCompressor::CombineLow(
+void DepthCompressor::Unfilter(
     int n,
     const uint16_t* depth)
 {
@@ -638,7 +638,6 @@ void DepthCompressor::CombineLow(
             depth[i + 1] = static_cast<uint16_t>(low_1 | (high_1 << 8));
         }
     }
-   
 }
 
 
