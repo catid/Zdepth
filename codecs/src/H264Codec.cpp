@@ -249,17 +249,27 @@ bool H264Codec::DecodeNvdec(
         int64_t* timestamps = nullptr;
         int frame_count = 0;
 
-        bool success = CudaDecoder->Decode(
-            data,
-            bytes,
-            &frames,
-            &frame_count,
-            CUVID_PKT_ENDOFPICTURE,
-            &timestamps,
-            0, // Timestamp
-            cudaStreamPerThread); // Use the default per-thread stream
-        if (!success) {
-            return false;
+        // Retries are needed according to Nvidia engineers:
+        // https://github.com/NVIDIA/NvPipe/blob/b3d0a7511052824ff0481fa6eecb3e95eac1a722/src/NvPipe.cu#L969
+
+        for (int i = 0; i < 3; ++i) {
+            bool success = CudaDecoder->Decode(
+                data,
+                bytes,
+                &frames,
+                &frame_count,
+                CUVID_PKT_ENDOFPICTURE, // Indicate we want the result immediately
+                &timestamps,
+                0, // Timestamp
+                cudaStreamPerThread); // Use the default per-thread stream
+            if (!success) {
+                return false;
+            }
+
+            // If we got a frame back:
+            if (frame_count >= 1) {
+                break;
+            }
         }
 
         if (frame_count < 1) {

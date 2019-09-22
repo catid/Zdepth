@@ -203,16 +203,13 @@ void QuantizeDepthImage(
     }
 }
 
-void DequantizeDepthImage(
-    int n,
-    const uint16_t* quantized,
-    std::vector<uint16_t>& depth)
+void DequantizeDepthImage(std::vector<uint16_t>& depth_inout)
 {
-    depth.resize(n);
-    uint16_t* dest = depth.data();
+    const int n = static_cast<int>( depth_inout.size() );
+    uint16_t* depth = depth_inout.data();
 
     for (int i = 0; i < n; ++i) {
-        dest[i] = AzureKinectDequantizeDepth(quantized[i]);
+        depth[i] = AzureKinectDequantizeDepth(depth[i]);
     }
 }
 
@@ -449,7 +446,7 @@ void DepthCompressor::Compress(
     // Rescale depth image to 0...2047
     RescaleImage_11Bits(QuantizedDepth, header.MinimumDepth, header.MaximumDepth);
 
-    Filter(n, width, QuantizedDepth.data());
+    Filter(width, QuantizedDepth);
 
     for (int i = 0; i < kParallelEncoders; ++i) {
         RescaleImage_8Bits(Low[i], header.LowMinimum[i], header.LowMaximum[i]);
@@ -521,53 +518,56 @@ DepthResult DepthCompressor::Decompress(
 
     // Get depth for previous frame
     const int n = width * height;
-    QuantizedDepth.resize(n);
-    uint16_t* depth = QuantizedDepth.data();
+    depth_out.resize(n);
 
     // Read header
-    High_UncompressedBytes = ReadU32_LE(src + 8);
-    const unsigned High_CompressedBytes = ReadU32_LE(src + 12);
-    unsigned total_bytes = kDepthHeaderBytes + High_CompressedBytes;
-    unsigned Low_CompressedBytes[kParallelEncoders];
+    unsigned total_bytes = kDepthHeaderBytes + header->HighCompressedBytes;
     for (int i = 0; i < kParallelEncoders; ++i) {
-        Low_CompressedBytes[i] = ReadU32_LE(src + 16 + i * 4);
-        total_bytes += Low_CompressedBytes[i];
+        total_bytes += header->LowCompressedBytes[i];
     }
-    if (High_UncompressedBytes < 2) {
+    if (header->HighUncompressedBytes < 2) {
         return DepthResult::Corrupted;
     }
     if (compressed.size() != total_bytes) {
         return DepthResult::FileTruncated;
     }
-    const uint8_t* High_Data = src + kDepthHeaderBytes;
-    const uint8_t* Low_Data = High_Data + High_CompressedBytes;
+
+    src += kDepthHeaderBytes;
 
     // Compress high bits
     bool success = ZstdDecompress(
-        High_Data,
-        High_CompressedBytes,
-        High_UncompressedBytes,
+        src,
+        header->HighCompressedBytes,
+        header->HighUncompressedBytes,
         High);
     if (!success) {
         return DepthResult::Corrupted;
     }
 
+    src += header->HighCompressedBytes;
+
     // Decompress low bits
     for (int i = 0; i < kParallelEncoders; ++i) {
+        const unsigned compressed_bytes = header->LowCompressedBytes[i];
+
         success = H264[i].Decode(
             width,
             height,
-            Low_Data,
-            Low_CompressedBytes[i],
+            src,
+            compressed_bytes,
             Low[i]);
         if (!success) {
             return DepthResult::Corrupted;
         }
+
+        src += compressed_bytes;
     }
 
-    Unfilter(n, depth);
+    Unfilter(width, depth_out);
 
-    DequantizeDepthImage(n, depth, depth_out);
+    UndoRescaleImage_11Bits(header->MinimumDepth, header->MaximumDepth, QuantizedDepth);
+
+    DequantizeDepthImage(depth_out);
     return DepthResult::Success;
 }
 
@@ -576,43 +576,64 @@ DepthResult DepthCompressor::Decompress(
 // DepthCompressor : Filtering
 
 void DepthCompressor::Filter(
-    int n,
-    const uint16_t* depth)
+    int stride,
+    std::vector<uint16_t>& depth)
 {
+    const int n = static_cast<int>( depth.size() );
+
     // Split data into high/low parts
     High.resize(n / 2);
     for (int i = 0; i < kParallelEncoders; ++i) {
+        Low[i].clear(); // Zero everything
         Low[i].resize(n + n / 2);
     }
 
     for (int i = 0; i < n; i += 2) {
         const uint16_t depth_0 = depth[i];
         const uint16_t depth_1 = depth[i + 1];
+
         unsigned high_0 = 0, high_1 = 0;
         uint8_t low_0 = static_cast<uint8_t>( depth_0 );
         uint8_t low_1 = static_cast<uint8_t>( depth_1 );
-        if (depth_0) {
-            high_0 = (depth_0 >> 8) + 1;
+
+        if (depth_0 != 0) {
+            // Read high bits
+            high_0 = (depth_0 >> 8);
+            // Preserve zeroes by offseting the values by 1
+            ++high_0;
+            // Fold to avoid sharp transitions from 255..0
             if (high_0 & 1) {
                 low_0 = 255 - low_0;
             }
         }
-        if (depth_1) {
-            high_1 = (depth_1 >> 8) + 1;
+
+        if (depth_1 != 0) {
+            // Read high bits
+            high_1 = (depth_1 >> 8);
+            // Preserve zeroes by offseting the values by 1
+            ++high_1;
+            // Fold to avoid sharp transitions from 255..0
             if (high_1 & 1) {
                 low_1 = 255 - low_1;
             }
         }
+
         High[i / 2] = static_cast<uint8_t>( high_0 | (high_1 << 4) );
-        Low[i] = low_0;
-        Low[i + 1] = low_1;
+
+        // Split image into 
+        const unsigned index_0 = high_0 % kParallelEncoders;
+        const unsigned index_1 = high_1 % kParallelEncoders;
+        Low[index_0][i] = low_0;
+        Low[index_1][i + 1] = low_1;
     }
 }
 
 void DepthCompressor::Unfilter(
-    int n,
-    const uint16_t* depth)
+    int stride,
+    std::vector<uint16_t>& depth)
 {
+    const int n = static_cast<int>( depth.size() );
+
     for (int i = 0; i < n; i += 2) {
         const uint8_t high = High[i / 2];
         uint8_t low_0 = Low[i];

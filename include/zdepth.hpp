@@ -14,24 +14,52 @@
     Since the depth images are small, it is possible to encode quickly
     and use multiple H.264 encoders 
 
-    The main departure is in losslessly compressing the high bits.
-
     Compression algorithm:
 
-    (1) Quantize depth to 11 bits based on sensor accuracy at range.
-    (2) Rescale the data so that it ranges from 0 to 2047.
-    (3) Compress high 3 bits of reach depth measurement:
-        Predict that next will match the larger of up/left.
-            This produces values that range from -7..+7
-        Zig-zag encode the residuals to a range of 1..15.
-            Use special value 0 to indicate no depth data.
-        Combine 4-bit nibbles together into bytes.
-        Compress with Zstd.
-    (4) Compress low 8 bits of each depth measurement with H.264.
-        Split the data based on the low two bits of the high bits.
-        For each split:
-            Rescale the data so it ranges from 0..255.
-            Compress the resulting data as an image with H.264.
+        (1) Special case for zero.
+            This ensures that the H.264 encoders do not flip zeroes.
+        (1) Quantize depth to 11 bits based on sensor accuracy at range.
+            Eliminate data that we do not need to encode.
+        (2) Rescale the data so that it ranges from 0 to 2047.
+            This is done to reduce the problems introduced by H.264.
+        (3) Compress high 3 bits with Zstd.
+        (4) Compress low 8 bits with H.264.
+
+    High 3-bit compression with Zstd:
+
+        (1) Prediction filtering (similar to PNG format).
+            From the lossless depth encoder I found that the best predictor
+            was one that predicted the larger of the depth value above and
+            to the left.  The results are in the range -7..7.
+        (2) Zig-zag encode to a range of 1..15.
+            After subtracting with prediction, the result is signed so to
+            make the result unsigned, we zig-zag encode, where zero is still
+            zero but other values are twice as large and positive.
+        (3) Combine 4-bit nibbles together into bytes.
+        (4) Encode with Zstd.
+
+    Low 8-bit compression with H.264:
+
+        (1) Folding to avoid sharp transitions in the low bits.
+            The low bits are submitted to the H.264 encoder, meaning that
+            wherever the 8-bit value rolls over it transitions from
+            255..0 again.  This sharp transition causes problems for the
+            encoder so to solve that we fold every other 8-bit range
+            by subtracting it from 255.  So instead the roll-over becomes
+            253, 254, 255, 254, 253, ... 1, 0, 1, 2, ...
+            This cuts the error about in half in testing.
+        (2) Split the image into equal ranges of depth values.
+            In practice this can be done by looking at the high bits.
+        (3) Rescale back to the 0..255 range.
+            After folding the data, we find the smallest and largest
+            values in the image, and rescale the image values back to the
+            0..255 range so that errors introduced by lossy compression
+            have less impact on the result.
+        (4) Compress the resulting data as an image with H.264.
+            We use the best hardware acceleration available on the platform
+            and attempt to run the multiple encoders in parallel.
+
+    Further details are in the DepthCompressor::Filter() code.
 
     This is based on the research of:
 
@@ -40,8 +68,26 @@
     using H.264," 2014 IEEE/RSJ International Conference on Intelligent Robots
     and Systems, Chicago, IL, 2014, pp. 3794-3799.
 
+    The main departure is in losslessly compressing the high bits.
+
     Uses libdivide: https://github.com/ridiculousfish/libdivide
     Uses Zstd: https://github.com/facebook/zstd
+*/
+
+/*
+    Why not use NvPipe?
+    https://github.com/NVIDIA/NvPipe
+
+    While NvPipe does seem to support 16-bit monochrome data, the manner
+    in which it does this is not recommended: The high and low bytes are
+    split into halves of the Y channel of an image, doubling the resolution.
+    So the video encoder runs twice as slow.  Single bit errors in the Y channel
+    are then magnified in the resulting decoded values by 256x, which is not
+    acceptable for depth data because this is basically unusable.
+
+    Other features of NvPipe are not useful for depth compression, and it
+    abstracts away the more powerful nvcuvid API that allows applications to
+    dispatch multiple encodes in parallel in a scatter-gather pattern.
 */
 
 #pragma once
@@ -90,31 +136,6 @@ static const int kParallelEncoders = 4;
     Format Magic is used to quickly check that the file is of this format.
     Words are stored in little-endian byte order.
 
-    0: <Format Magic = 202 (1 byte)>
-    1: <Flags (1 byte)>
-    2: <Frame Number (2 bytes)>
-    4: <Width (2 bytes)>
-    6: <Height (2 bytes)>
-    8: <Minimum Depth (2 bytes)>
-    10: <Maximum Depth (2 bytes)>
-    12: <High Uncompressed Bytes (4 bytes)>
-    16: <High Compressed Bytes (4 bytes)>
-    20: <Low0 Compressed Bytes (4 bytes)>
-    24: <Low1 Compressed Bytes (4 bytes)>
-    28: <Low2 Compressed Bytes (4 bytes)>
-    32: <Low3 Compressed Bytes (4 bytes)>
-    36: <Low0 Minimum (1 byte)>
-    37: <Low0 Maximum (1 byte)>
-    38: <Low1 Minimum (1 byte)>
-    39: <Low1 Maximum (1 byte)>
-    40: <Low2 Minimum (1 byte)>
-    41: <Low2 Maximum (1 byte)>
-    42: <Low3 Minimum (1 byte)>
-    43: <Low3 Maximum (1 byte)>
-    Followed by compressed data.
-
-    The compressed and uncompressed sizes are of packed data for High,Low0-3.
-
     Flags = 1 for I-frames and 0 for P-frames.
     The P-frames are able to use predictors that reference the previous frame.
     The decoder keeps track of the previously decoded Frame Number and rejects
@@ -138,6 +159,7 @@ struct DepthHeader
     uint32_t LowCompressedBytes[kParallelEncoders];
     uint8_t LowMinimum[kParallelEncoders];
     uint8_t LowMaximum[kParallelEncoders];
+    // Compressed data follows: High bits, then low bits.
 };
 
 #pragma pack(pop)
@@ -211,10 +233,9 @@ void QuantizeDepthImage(
     int n,
     const uint16_t* depth,
     std::vector<uint16_t>& quantized);
-void DequantizeDepthImage(
-    int n,
-    const uint16_t* quantized,
-    std::vector<uint16_t>& depth);
+
+// This modifies the depth image in-place
+void DequantizeDepthImage(std::vector<uint16_t>& depth_inout);
 
 
 //------------------------------------------------------------------------------
@@ -312,13 +333,11 @@ protected:
 
     // Transform the data for compression by Zstd/H.264
     void Filter(
-        int n,
         int stride,
-        const uint16_t* depth);
+        std::vector<uint16_t>& depth);
     void Unfilter(
-        int n,
         int stride,
-        const uint16_t* depth);
+        std::vector<uint16_t>& depth);
 };
 
 
