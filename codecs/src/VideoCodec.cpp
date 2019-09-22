@@ -163,29 +163,22 @@ bool VideoCodec::EncodeBeginNvenc(
             encodeConfig.gopLength = NVENC_INFINITE_GOPLENGTH;
             encodeConfig.frameIntervalP = 1;
 
-            // How to pick encoder mode:
-            // https://slhck.info/video/2017/03/01/rate-control.html
-            // Our goal is to have constant quality and low latency for streaming.
+            // Target bitrate: Recommend 2 Mbps at 320 x 288.
+            // Otherwise it is better to just use the lossless encoder.
+            const float bitrate_scale = Params.Width * Params.Height / static_cast<float>(320 * 288);
+            const unsigned bitrate = static_cast<unsigned>( 2000000 * bitrate_scale );
 
-            if (Params.Bitrate != 0)
-            {
-                // Choose VBR mode allowing for spikes for tricky frames
-                // NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ: Error bound is smaller
-                // NV_ENC_PARAMS_RC_CBR_HQ: Seems to have a longer tail of errors
-                // NV_ENC_PARAMS_RC_VBR_HQ: Also long error tail
-                encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
-                encodeConfig.rcParams.averageBitRate = Params.Bitrate;
-                encodeConfig.rcParams.maxBitRate = Params.Bitrate;
+            // Choose VBR mode allowing for spikes for tricky frames
+            // NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ: Error bound is smaller
+            // NV_ENC_PARAMS_RC_CBR_HQ: Seems to have a longer tail of errors
+            // NV_ENC_PARAMS_RC_VBR_HQ: Also long error tail
+            encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
+            encodeConfig.rcParams.averageBitRate = bitrate;
+            encodeConfig.rcParams.maxBitRate = bitrate;
 
-                // Tune VBV size 
-                encodeConfig.rcParams.vbvBufferSize = Params.Bitrate / Params.Fps;
-                encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
-            }
-            else
-            {
-                // For constraining the quality loss: NV_ENC_PARAMS_RC_CONSTQP
-                encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
-            }
+            // Tune VBV size 
+            encodeConfig.rcParams.vbvBufferSize = bitrate / Params.Fps;
+            encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
 
             // Disable adaptive quantization for this type of data.
             // It leads to much higher long tail errors.

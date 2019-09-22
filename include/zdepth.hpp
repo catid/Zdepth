@@ -1,15 +1,17 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
 /*
-    Zdepth
+    ZdepthLossy
 
     Lossy depth buffer compression designed and tested for Azure Kinect DK.
     Based on the Facebook Zstd library and H.264/HEVC for compression.
 
-    Zdepth defines a file format and performs full input checking.
+    ZdepthLossy defines a file format and performs full input checking.
 
     Hardware acceleration for H.264/HEVC video compression is leveraged when
     possible to reduce CPU usage during encoding and decoding.
+
+    Currently requires Windows, an NVidia graphics card, and CUDA v10.1.
 */
 
 /*

@@ -400,16 +400,18 @@ void DepthCompressor::Compress(
     QuantizeDepthImage(n, unquantized_depth, QuantizedDepth);
     RescaleImage_11Bits(QuantizedDepth, header.MinimumDepth, header.MaximumDepth);
     Filter(QuantizedDepth);
-    ZstdCompress(High, HighOut);
-
-    header.HighUncompressedBytes = static_cast<uint32_t>( High.size() );
-    header.HighCompressedBytes = static_cast<uint32_t>( HighOut.size() );
 
     Codec.EncodeBegin(
         params,
         keyframe,
         Low,
         LowOut);
+
+    // Interleave Zstd compression with video encoder work
+    ZstdCompress(High, HighOut);
+    header.HighUncompressedBytes = static_cast<uint32_t>( High.size() );
+    header.HighCompressedBytes = static_cast<uint32_t>( HighOut.size() );
+
     Codec.EncodeFinish(LowOut);
     header.LowCompressedBytes = static_cast<uint32_t>( LowOut.size() );
 

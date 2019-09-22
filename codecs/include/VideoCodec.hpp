@@ -6,16 +6,16 @@
     general video codec library.
 
     On Intel Windows the best way is to use Nvidia's CUDA nvcuvid library,
-    and maybe MediaFoundation if that is not available.
-    On Intel Linux the best way is to use ffmpeg's vaapi plugin.
+    and maybe MediaFoundation for Intel Quick Sync Video (QSV).
+    On Intel Linux the best way is to use ffmpeg's vaapi plugin for QSV.
     On Android/iOS there are OS-specific APIs around some pretty unreliable hw.
     Other platforms mostly use V4L2.
 
-    Currently only CUDA and x264 are implemented, but it is designed to make it
+    Currently only CUDA is implemented, but it is designed to make it
     easier to add more hardware-accelerated backends.
 
-    Right now it is limited to no more than two H.264 encoders at a time.
-    To do more we would have to multiplex between the two NVENC instances.
+    Note that most hardware encoders are limited to one/two sessions at a time,
+    so it is often not desired to make more than one encoder instance.
 */
 
 /*
@@ -99,13 +99,6 @@ struct VideoParameters
 
     // Frames per second of camera
     int Fps = 30;
-
-    // To tell the encoder to hit a target bitrate, set Bitrate non-zero.
-    // Otherwise it will use the QP variable to control the encoder.
-    int Bitrate = 1000000;
-
-    // Quality, lower is better
-    int Qp = 0;
 };
 
 enum class VideoBackend
@@ -140,15 +133,16 @@ protected:
     VideoBackend EncoderBackend = VideoBackend::Uninitialized;
     VideoBackend DecoderBackend = VideoBackend::Uninitialized;
 
+    // Shared state
+    uint64_t NextTimestamp = 0;
+    std::vector<std::vector<uint8_t>> VideoTemp;
+
     // CUDA NVENC/NVDEC
     GUID CodecGuid;
     bool CudaNonfunctional = false;
     CudaContext Context;
     std::shared_ptr<NvEncoderCuda> CudaEncoder;
     std::shared_ptr<NvDecoder> CudaDecoder;
-
-    uint64_t NextTimestamp = 0;
-    std::vector<std::vector<uint8_t>> VideoTemp;
 
 
     bool EncodeBeginNvenc(
