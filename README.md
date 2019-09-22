@@ -3,6 +3,10 @@
 Lossless depth buffer compression designed and tested for Microsoft Azure Kinect DK.
 Based on the Facebook Zstd library.
 
+There is a lossy version of this library here that produces files half the size,
+in trade for slower compression and lower quality:
+https://github.com/catid/ZdepthLossy
+
 The compressor defines a file format and performs full input checking.
 Supports temporal back-references similar to other video formats.
 
@@ -44,18 +48,8 @@ depth sensor.  The video player uses this library to decompress the depth image
 and then uses the calibration data to generate xyz, uv, and indices for
 rendering the mesh.
 
-The Azure Kinect DK SDK has functions that convert from the depth camera pixel
-position to a 3D position in the frame of the camera, which is the xyz vertex
-coordinates.  It also has a function that converts xyz into 2D camera image
-space coordinates (uv).
-
-To generate the triangle indices, simply walk from the upper left to the lower
-right and generate triangles between non-zero neighbors.
-
-If you are looking for other libraries that are useful for making the most of the
-Azure Kinect DK, I recommend looking at Intel's Open3D library, which supports
-50x faster global point cloud registration than Pointcloud or OpenGR, and Open3D
-also has a capture plugin for single cameras.
+There is software here that can convert from 16-bit depth to xyzuv/indices in
+only 3 milliseconds here: https://github.com/catid/ZdepthLossy
 
 
 ## Building and Using
