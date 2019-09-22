@@ -231,7 +231,7 @@ static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame
         }
         error_hist[z] += z;
     }
-#if 0
+#if 1
     for (int i = 0; i < 512; ++i) {
         if (error_hist[i]) {
             cout << "Hist: " << i << " : " << error_hist[i] << endl;
@@ -247,10 +247,16 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 
     const uint64_t t0 = GetTimeUsec();
 
+    DepthParams params;
+    params.Width = Width;
+    params.Height = Height;
+    params.Codec = VideoType::H265;
+    params.MaxBitrate = 5000000;
+    params.AverageBitrate = 3000000;
+    params.Fps = 30;
+
     compressor.Compress(
-        Width,
-        Height,
-        VideoType::H264,
+        params,
         frame,
         compressed,
         keyframe);

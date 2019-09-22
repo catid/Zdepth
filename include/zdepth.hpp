@@ -26,16 +26,8 @@
 
     High 3-bit compression with Zstd:
 
-        (1) Prediction filtering (similar to PNG format).
-            From the lossless depth encoder I found that the best predictor
-            was one that predicted the larger of the depth value above and
-            to the left.  The results are in the range -7..7.
-        (2) Zig-zag encode to a range of 1..15.
-            After subtracting with prediction, the result is signed so to
-            make the result unsigned, we zig-zag encode, where zero is still
-            zero but other values are twice as large and positive.
-        (3) Combine 4-bit nibbles together into bytes.
-        (4) Encode with Zstd.
+        (1) Combine 4-bit nibbles together into bytes.
+        (2) Encode with Zstd.
 
     Low 8-bit compression with H.264:
 
@@ -47,14 +39,12 @@
             by subtracting it from 255.  So instead the roll-over becomes
             253, 254, 255, 254, 253, ... 1, 0, 1, 2, ...
             This cuts the error about in half in testing.
-        (2) Split the image into equal ranges of depth values.
-            In practice this can be done by looking at the high bits.
-        (3) Rescale back to the 0..255 range.
+        (2) Rescale low bits to 0..255 range.
             After folding the data, we find the smallest and largest
             values in the image, and rescale the image values back to the
             0..255 range so that errors introduced by lossy compression
             have less impact on the result.
-        (4) Compress the resulting data as an image with H.264.
+        (3) Compress the resulting data as an image with H.264.
             We use the best hardware acceleration available on the platform
             and attempt to run the multiple encoders in parallel.
 
@@ -69,7 +59,10 @@
     using H.264," 2014 IEEE/RSJ International Conference on Intelligent Robots
     and Systems, Chicago, IL, 2014, pp. 3794-3799.
 
-    The main departure is in losslessly compressing the high bits.
+    The main departure is in losslessly compressing the high bits,
+    and using a single encoder for the low bits since in practice
+    having more than one encoder is problematic when recording from
+    multiple cameras: NVENC only supports two parallel encoders.
 
     Uses libdivide: https://github.com/ridiculousfish/libdivide
     Uses Zstd: https://github.com/facebook/zstd
@@ -111,10 +104,7 @@ enum DepthFlags
 };
 
 // Number of bytes in header
-static const int kDepthHeaderBytes = 44;
-
-// Number of encoders to run in parallel
-static const int kParallelEncoders = 2;
+static const int kDepthHeaderBytes = 26;
 
 /*
     File format:
@@ -133,18 +123,18 @@ static const int kParallelEncoders = 2;
 
 struct DepthHeader
 {
-    uint8_t Magic;
-    uint8_t Flags;
-    uint16_t FrameNumber;
-    uint16_t Width;
-    uint16_t Height;
-    uint16_t MinimumDepth;
-    uint16_t MaximumDepth;
-    uint32_t HighUncompressedBytes;
-    uint32_t HighCompressedBytes;
-    uint32_t LowCompressedBytes[kParallelEncoders];
-    uint8_t LowMinimum[kParallelEncoders];
-    uint8_t LowMaximum[kParallelEncoders];
+    /*  0 */ uint8_t Magic;
+    /*  1 */ uint8_t Flags;
+    /*  2 */ uint16_t FrameNumber;
+    /*  4 */ uint16_t Width;
+    /*  6 */ uint16_t Height;
+    /*  8 */ uint16_t MinimumDepth;
+    /* 10 */ uint16_t MaximumDepth;
+    /* 12 */ uint32_t HighUncompressedBytes;
+    /* 16 */ uint32_t HighCompressedBytes;
+    /* 20 */ uint32_t LowCompressedBytes;
+    /* 24 */ uint8_t LowMinimum;
+    /* 25 */ uint8_t LowMaximum;
     // Compressed data follows: High bits, then low bits.
 };
 
@@ -281,15 +271,22 @@ bool ZstdDecompress(
 //------------------------------------------------------------------------------
 // DepthCompressor
 
+struct DepthParams
+{
+    int Width = 0, Height = 0;
+    VideoType Codec = VideoType::H264;
+    int MaxBitrate = 2000000;
+    int AverageBitrate = 1000000;
+    int Fps = 30;
+};
+
 class DepthCompressor
 {
 public:
     // Compress depth array to buffer
     // Set keyframe to indicate this frame should not reference the previous one
     void Compress(
-        int width,
-        int height,
-        VideoType video_codec_type, // H264 or HEVC
+        const DepthParams& params,
         const uint16_t* unquantized_depth,
         std::vector<uint8_t>& compressed,
         bool keyframe);
@@ -309,19 +306,17 @@ protected:
     unsigned CompressedFrameNumber = 0;
 
     std::vector<uint8_t> High;
-    std::vector<uint8_t> Low[kParallelEncoders];
+    std::vector<uint8_t> Low;
 
     // Results of compression
-    std::vector<uint8_t> HighOut, LowOut[kParallelEncoders];
+    std::vector<uint8_t> HighOut, LowOut;
 
     // Video compressor used for low bits
-    VideoCodec Codec[kParallelEncoders];
+    VideoCodec Codec;
 
 
     // Transform the data for compression by Zstd/H.264
     void Filter(
-        int width,
-        int height,
         const std::vector<uint16_t>& depth_in);
     void Unfilter(
         int width,
