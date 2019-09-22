@@ -1,19 +1,18 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
 /*
-    ZdepthLossy
+    Zdepth
 
     Lossy depth buffer compression designed and tested for Azure Kinect DK.
-    Based on the Facebook Zstd library for compression.
+    Based on the Facebook Zstd library and H.264/HEVC for compression.
 
-    The compressor defines a file format and performs full input checking.
-    Supports temporal back-references similar to other video formats.
+    Zdepth defines a file format and performs full input checking.
 
-    Hardware acceleration for H.264 video compression is leveraged when
+    Hardware acceleration for H.264/HEVC video compression is leveraged when
     possible to reduce CPU usage during encoding and decoding.
-    Since the depth images are small, it is possible to encode quickly
-    and use multiple H.264 encoders 
+*/
 
+/*
     Compression algorithm:
 
         (1) Special case for zero.
@@ -60,7 +59,9 @@
             and attempt to run the multiple encoders in parallel.
 
     Further details are in the DepthCompressor::Filter() code.
+*/
 
+/*
     This is based on the research of:
 
     F. Nenci, L. Spinello and C. Stachniss,
@@ -72,22 +73,6 @@
 
     Uses libdivide: https://github.com/ridiculousfish/libdivide
     Uses Zstd: https://github.com/facebook/zstd
-*/
-
-/*
-    Why not use NvPipe?
-    https://github.com/NVIDIA/NvPipe
-
-    While NvPipe does seem to support 16-bit monochrome data, the manner
-    in which it does this is not recommended: The high and low bytes are
-    split into halves of the Y channel of an image, doubling the resolution.
-    So the video encoder runs twice as slow.  Single bit errors in the Y channel
-    are then magnified in the resulting decoded values by 256x, which is not
-    acceptable for depth data because this is basically unusable.
-
-    Other features of NvPipe are not useful for depth compression, and it
-    abstracts away the more powerful nvcuvid API that allows applications to
-    dispatch multiple encodes in parallel in a scatter-gather pattern.
 */
 
 #pragma once
@@ -108,7 +93,7 @@
     #define DEPTH_ALIGNED_ACCESSES
 #endif // ANDROID
 
-#include "H264Codec.hpp"
+#include "VideoCodec.hpp"
 
 namespace zdepth {
 
@@ -121,14 +106,15 @@ static const uint8_t kDepthFormatMagic = 202; // 0xCA
 
 enum DepthFlags
 {
-    DepthFlags_Keyframe = 1,
+    DepthFlags_Keyframe = 1,    // Frame is an IDR
+    DepthFlags_HEVC = 2,        // Use HEVC instead of H.264
 };
 
 // Number of bytes in header
 static const int kDepthHeaderBytes = 44;
 
 // Number of encoders to run in parallel
-static const int kParallelEncoders = 4;
+static const int kParallelEncoders = 2;
 
 /*
     File format:
@@ -303,6 +289,7 @@ public:
     void Compress(
         int width,
         int height,
+        VideoType video_codec_type, // H264 or HEVC
         const uint16_t* unquantized_depth,
         std::vector<uint8_t>& compressed,
         bool keyframe);
@@ -328,16 +315,18 @@ protected:
     std::vector<uint8_t> HighOut, LowOut[kParallelEncoders];
 
     // Video compressor used for low bits
-    H264Codec H264[kParallelEncoders];
+    VideoCodec Codec[kParallelEncoders];
 
 
     // Transform the data for compression by Zstd/H.264
     void Filter(
-        int stride,
-        std::vector<uint16_t>& depth);
+        int width,
+        int height,
+        const std::vector<uint16_t>& depth_in);
     void Unfilter(
-        int stride,
-        std::vector<uint16_t>& depth);
+        int width,
+        int height,
+        std::vector<uint16_t>& depth_out);
 };
 
 

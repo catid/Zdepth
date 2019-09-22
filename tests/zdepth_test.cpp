@@ -247,7 +247,13 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 
     const uint64_t t0 = GetTimeUsec();
 
-    compressor.Compress(Width, Height, frame, compressed, keyframe);
+    compressor.Compress(
+        Width,
+        Height,
+        VideoType::H264,
+        frame,
+        compressed,
+        keyframe);
 
     const uint64_t t1 = GetTimeUsec();
 
@@ -279,48 +285,6 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
         " bytes (ratio = " << original_bytes / (float)compressed.size() << ":1) ("
         << (compressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
     cout << "Zdepth Speed: Compressed in " << (t1 - t0) / 1000.f << " msec. Decompressed in " << (t2 - t1) / 1000.f << " msec" << endl;
-
-    const int n = Width * Height;
-    std::vector<uint16_t> quantized(n);
-    compressed.resize(n * 3);
-
-    const uint64_t t3 = GetTimeUsec();
-    QuantizeDepthImage(Width, Height, frame, quantized);
-    const int compressed_bytes = CompressRVL((short*)quantized.data(), (char*)compressed.data(), n);
-    compressed.resize(compressed_bytes);
-    const uint64_t t4 = GetTimeUsec();
-
-    std::vector<uint8_t> recompressed;
-    std::vector<uint8_t> decompressed;
-
-    const uint64_t t5 = GetTimeUsec();
-    ZstdCompress(compressed, recompressed);
-    const uint64_t t6 = GetTimeUsec();
-    ZstdDecompress(recompressed.data(), recompressed.size(), compressed.size(), decompressed);
-    const uint64_t t7 = GetTimeUsec();
-    quantized.resize(n * 2);
-    DecompressRVL((char*)decompressed.data(), (short*)quantized.data(), n);
-    DequantizeDepthImage(Width, Height, quantized.data(), depth);
-    const uint64_t t8 = GetTimeUsec();
-
-    for (int i = 0; i < n; ++i) {
-        if (AzureKinectQuantizeDepth(depth[i]) != AzureKinectQuantizeDepth(frame[i])) {
-            cout << "RVL bug" << endl;
-            return false;
-        }
-    }
-
-    cout << endl;
-    cout << "Quantization+RVL Compression: " << original_bytes << " bytes -> " << compressed.size() << 
-        " bytes (ratio = " << original_bytes / (float)compressed.size() << ":1) ("
-        << (compressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
-    cout << "Quantization+RVL Speed: Compressed in " << (t4 - t3) / 1000.f << " msec. Decompressed in " << (t8 - t7) / 1000.f << " msec" << endl;
-
-    cout << endl;
-    cout << "Quantization+RVL+Zstd Compression: " << original_bytes << " bytes -> " << recompressed.size() << 
-        " bytes (ratio = " << original_bytes / (float)recompressed.size() << ":1) ("
-        << (recompressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
-    cout << "Quantization+RVL+Zstd Speed: Compressed in " << (t6 - t5 + t4 - t3) / 1000.f << " msec. Decompressed in " << (t8 - t6) / 1000.f << " msec" << endl;
 
     return true;
 }

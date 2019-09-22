@@ -1,6 +1,6 @@
 // Copyright 2019 (c) Christopher A. Taylor.  All rights reserved.
 
-#include "H264Codec.hpp"
+#include "VideoCodec.hpp"
 
 namespace zdepth {
 
@@ -54,46 +54,46 @@ void CudaContext::Destroy()
 //------------------------------------------------------------------------------
 // Video Codec : API
 
-bool H264Codec::EncodeBegin(
-    int width,
-    int height,
+bool VideoCodec::EncodeBegin(
+    const VideoParameters& params,
     bool keyframe,
     const std::vector<uint8_t>& data,
     std::vector<uint8_t>& compressed)
 {
     // If resolution changed:
-    if (width != Width || height != Height) {
+    if (params.Width != Params.Width || params.Height != Params.Height) {
         CleanupCuda();
         EncoderBackend = VideoBackend::Uninitialized;
         DecoderBackend = VideoBackend::Uninitialized;
-        Width = width;
-        Height = height;
     }
+    Params = params;
 
     return EncodeBeginNvenc(keyframe, data, compressed);
 }
 
-bool H264Codec::EncodeFinish(
+bool VideoCodec::EncodeFinish(
     std::vector<uint8_t>& compressed)
 {
     return EncodeFinishNvenc(compressed);
 }
 
-bool H264Codec::Decode(
+bool VideoCodec::Decode(
     int width,
     int height,
+    VideoType type,
     const uint8_t* data,
     int bytes,
     std::vector<uint8_t>& decoded)
 {
     // If resolution changed:
-    if (width != Width || height != Height) {
+    if (width != Params.Width || height != Params.Height) {
         CleanupCuda();
         EncoderBackend = VideoBackend::Uninitialized;
         DecoderBackend = VideoBackend::Uninitialized;
-        Width = width;
-        Height = height;
     }
+    Params.Width = width;
+    Params.Height = height;
+    Params.Type = type;
 
     return DecodeNvdec(data, bytes, decoded);
 }
@@ -102,7 +102,7 @@ bool H264Codec::Decode(
 //------------------------------------------------------------------------------
 // Video Codec : CUDA Backend
 
-bool H264Codec::EncodeBeginNvenc(
+bool VideoCodec::EncodeBeginNvenc(
     bool keyframe,
     const std::vector<uint8_t>& data,
     std::vector<uint8_t>& compressed)
@@ -113,24 +113,82 @@ bool H264Codec::EncodeBeginNvenc(
                 return false;
             }
 
+            CodecGuid = (Params.Type == VideoType::H264) ? NV_ENC_CODEC_H264_GUID : NV_ENC_CODEC_HEVC_GUID;
+
             CudaEncoder = std::make_shared<NvEncoderCuda>(
                 Context.Context,
-                Width,
-                Height,
+                Params.Width,
+                Params.Height,
                 NV_ENC_BUFFER_FORMAT_NV12);
 
-            NV_ENC_INITIALIZE_PARAMS initializeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
+            NV_ENC_INITIALIZE_PARAMS encodeParams = { NV_ENC_INITIALIZE_PARAMS_VER };
             NV_ENC_CONFIG encodeConfig = { NV_ENC_CONFIG_VER };
-            initializeParams.encodeConfig = &encodeConfig;
+            encodeParams.encodeConfig = &encodeConfig;
 
             CudaEncoder->CreateDefaultEncoderParams(
-                &initializeParams,
-                NV_ENC_CODEC_H264_GUID,
+                &encodeParams,
+                CodecGuid,
                 NV_ENC_PRESET_LOW_LATENCY_HQ_GUID);
-            // NV_ENC_PRESET_DEFAULT_GUID
-            // NV_ENC_PRESET_LOW_LATENCY_HP_GUID
 
-            CudaEncoder->CreateEncoder(&initializeParams);
+            encodeParams.frameRateNum = Params.Fps;
+            encodeParams.frameRateDen = 1;
+            encodeParams.enablePTD = 1; // Allow NVENC to choose picture types
+
+            const bool supports_intra_refresh = CudaEncoder->GetCapabilityValue(
+                CodecGuid,
+                NV_ENC_CAPS_SUPPORT_INTRA_REFRESH);
+
+            // Enable intra-refresh for a more consistent frame size:
+            if (Params.Type == VideoType::H264) {
+                auto& h264Config = encodeConfig.encodeCodecConfig.h264Config;
+                h264Config.repeatSPSPPS = 0;
+                if (supports_intra_refresh) {
+                    h264Config.enableIntraRefresh = 1;
+                    h264Config.intraRefreshPeriod = Params.Fps * 10;
+                    h264Config.intraRefreshCnt = Params.Fps;
+                    h264Config.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+                }
+            } else { // HEVC:
+                auto& hevcConfig = encodeConfig.encodeCodecConfig.hevcConfig;
+                hevcConfig.repeatSPSPPS = 0;
+                if (supports_intra_refresh) {
+                    hevcConfig.enableIntraRefresh = 1;
+                    hevcConfig.intraRefreshPeriod = Params.Fps * 10;
+                    hevcConfig.intraRefreshCnt = Params.Fps;
+                    hevcConfig.idrPeriod = NVENC_INFINITE_GOPLENGTH;
+                }
+            }
+
+            // Manual IDRs when application requests a keyframe
+            encodeConfig.gopLength = NVENC_INFINITE_GOPLENGTH;
+            encodeConfig.frameIntervalP = 1;
+
+            // How to pick encoder mode:
+            // https://slhck.info/video/2017/03/01/rate-control.html
+            // Our goal is to have constant quality and low latency for streaming.
+
+            // Choose VBR mode allowing for spikes for tricky frames
+            // NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ, NV_ENC_PARAMS_RC_CBR_HQ, NV_ENC_PARAMS_RC_VBR_HQ
+            encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR_HQ;
+            encodeConfig.rcParams.averageBitRate = Params.AverageBitrate;
+            encodeConfig.rcParams.maxBitRate = Params.MaxBitrate;
+
+            // Tune VBV size 
+            encodeConfig.rcParams.vbvBufferSize = Params.AverageBitrate / Params.Fps;
+            encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
+
+            // Enable AQ
+            encodeConfig.rcParams.enableTemporalAQ = 1;
+            encodeConfig.rcParams.enableAQ = 1; // Spatial AQ
+            encodeConfig.rcParams.aqStrength = 0; // TBD
+
+            // Disable B-frames
+            encodeConfig.rcParams.zeroReorderDelay = 1;
+
+            // Enable non-reference P-frame optimization
+            encodeConfig.rcParams.enableNonRefP = 1; // requires enablePTD=1
+
+            CudaEncoder->CreateEncoder(&encodeParams);
         }
 
         const NvEncInputFrame* frame = CudaEncoder->GetNextInputFrame();
@@ -146,8 +204,8 @@ bool H264Codec::EncodeBeginNvenc(
             0,
             (CUdeviceptr)frame->inputPtr,
             (int)frame->pitch,
-            Width,
-            Height, 
+            Params.Width,
+            Params.Height, 
             CU_MEMORYTYPE_HOST, 
             frame->bufferFormat,
             frame->chromaOffsets,
@@ -158,7 +216,8 @@ bool H264Codec::EncodeBeginNvenc(
         pic_params.inputPitch = frame->pitch;
 
         if (keyframe) {
-            pic_params.encodePicFlags |= NV_ENC_PIC_FLAG_OUTPUT_SPSPPS | NV_ENC_PIC_FLAG_FORCEIDR;
+            // NV_ENC_PIC_FLAG_OUTPUT_SPSPPS not needed
+            pic_params.encodePicFlags |= NV_ENC_PIC_FLAG_FORCEIDR;
             pic_params.pictureType = NV_ENC_PIC_TYPE_IDR;
         } else {
             pic_params.pictureType = NV_ENC_PIC_TYPE_P;
@@ -185,14 +244,14 @@ bool H264Codec::EncodeBeginNvenc(
             size += unit_size;
         }
     }
-    catch (NVENCException& ex) {
+    catch (NVENCException& /*ex*/) {
         return false;
     }
 
     return true;
 }
 
-bool H264Codec::EncodeFinishNvenc(
+bool VideoCodec::EncodeFinishNvenc(
     std::vector<uint8_t>& compressed)
 {
     try {
@@ -212,14 +271,14 @@ bool H264Codec::EncodeFinishNvenc(
             size += unit_size;
         }
     }
-    catch (NVENCException& ex) {
+    catch (NVENCException& /*ex*/) {
         return false;
     }
 
     return true;
 }
 
-bool H264Codec::DecodeNvdec(
+bool VideoCodec::DecodeNvdec(
     const uint8_t* data,
     int bytes,
     std::vector<uint8_t>& decoded)
@@ -234,13 +293,13 @@ bool H264Codec::DecodeNvdec(
 
             CudaDecoder = std::make_shared<NvDecoder>(
                 Context.Context,
-                Width,
-                Height,
+                Params.Width,
+                Params.Height,
                 false, // Do not use device frame
-                cudaVideoCodec_H264,
+                Params.Type == VideoType::H264 ? cudaVideoCodec_H264 : cudaVideoCodec_HEVC,
                 nullptr, // No mutex
                 true, // Low latency
-                false, // Pitched device frame?
+                false, // Non-pitched frame
                 nullptr, // No crop
                 nullptr); // No resize
         }
@@ -258,7 +317,7 @@ bool H264Codec::DecodeNvdec(
                 bytes,
                 &frames,
                 &frame_count,
-                CUVID_PKT_ENDOFPICTURE, // Indicate we want the result immediately
+                CUVID_PKT_ENDOFPICTURE, // Immediate result requested
                 &timestamps,
                 0, // Timestamp
                 cudaStreamPerThread); // Use the default per-thread stream
@@ -276,18 +335,18 @@ bool H264Codec::DecodeNvdec(
             return false;
         }
 
-        const int y_bytes = Width * Height;
+        const int y_bytes = Params.Width * Params.Height;
         decoded.resize(y_bytes);
         memcpy(decoded.data(), frames[0], y_bytes);
     }
-    catch (NVENCException& ex) {
+    catch (NVENCException& /*ex*/) {
         return false;
     }
 
     return true;
 }
 
-void H264Codec::CleanupCuda()
+void VideoCodec::CleanupCuda()
 {
     CudaEncoder.reset();
     CudaDecoder.reset();

@@ -13,6 +13,26 @@
 
     Currently only CUDA and x264 are implemented, but it is designed to make it
     easier to add more hardware-accelerated backends.
+
+    Right now it is limited to no more than two H.264 encoders at a time.
+    To do more we would have to multiplex between the two NVENC instances.
+*/
+
+/*
+    Why not use NvPipe?
+    https://github.com/NVIDIA/NvPipe
+
+    While NvPipe does seem to support 16-bit monochrome data, the manner
+    in which it does this is not recommended: The high and low bytes are
+    split into halves of the Y channel of an image, doubling the resolution.
+    So the video encoder runs twice as slow.  Single bit errors in the Y channel
+    are then magnified in the resulting decoded values by 256x, which is not
+    acceptable for depth data because this is basically unusable.
+
+    Other features of NvPipe are not useful for depth compression, and it
+    abstracts away the more powerful nvcuvid API that allows applications to
+    dispatch multiple encodes in parallel in a scatter-gather pattern, and to
+    tune the encoder parameters like intra-refresh, AQ, and so on.
 */
 
 #pragma once
@@ -61,6 +81,25 @@ struct CudaContext
 //------------------------------------------------------------------------------
 // Video Codec
 
+enum class VideoType
+{
+    // NVENC only supports these two
+    H264,
+    H265,
+};
+
+struct VideoParameters
+{
+    VideoType Type = VideoType::H264;
+    int Width = 0, Height = 0;
+    int Fps = 30;
+
+    // We use the encoder in VBR mode, where an average bitrate is desired but a
+    // maximum burst bitrate can also be specified to avoid quality loss.
+    int AverageBitrate = 1000000;
+    int MaxBitrate = 2000000;
+};
+
 enum class VideoBackend
 {
     Uninitialized,
@@ -68,12 +107,11 @@ enum class VideoBackend
     Cuda,
 };
 
-class H264Codec
+class VideoCodec
 {
 public:
     bool EncodeBegin(
-        int width,
-        int height,
+        const VideoParameters& params,
         bool keyframe,
         const std::vector<uint8_t>& data,
         std::vector<uint8_t>& compressed);
@@ -83,17 +121,19 @@ public:
     bool Decode(
         int width,
         int height,
+        VideoType type,
         const uint8_t* data,
         int bytes,
         std::vector<uint8_t>& decoded);
 
 protected:
-    int Width = 0, Height = 0;
+    VideoParameters Params{};
 
     VideoBackend EncoderBackend = VideoBackend::Uninitialized;
     VideoBackend DecoderBackend = VideoBackend::Uninitialized;
 
     // CUDA NVENC/NVDEC
+    GUID CodecGuid;
     bool CudaNonfunctional = false;
     CudaContext Context;
     std::shared_ptr<NvEncoderCuda> CudaEncoder;

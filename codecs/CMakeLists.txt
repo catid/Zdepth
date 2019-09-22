@@ -14,12 +14,12 @@ endif()
 # Source
 
 set(INCLUDE_FILES
-    include/H264Codec.hpp
+    include/VideoCodec.hpp
 )
 
 set(SOURCE_FILES
     ${INCLUDE_FILES}
-    src/H264Codec.cpp
+    src/VideoCodec.cpp
 )
 
 include_directories(include ${CUDA_INCLUDE_DIR})
