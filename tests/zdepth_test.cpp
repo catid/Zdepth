@@ -224,7 +224,7 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
     VideoParameters params{};
     params.Width = Width;
     params.Height = Height;
-    params.Type = VideoType::H264;
+    params.Type = VideoType::H265;
     params.Fps = 30;
 
     compressor.Compress(

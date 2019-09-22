@@ -25,9 +25,6 @@
     #include <sys/file.h> // flock
 #endif
 
-#include <iostream>
-using namespace std;
-
 namespace zdepth {
 
 
@@ -428,9 +425,6 @@ void DepthCompressor::Compress(
     memcpy(copy_dest, HighOut.data(), HighOut.size());
     copy_dest += HighOut.size();
     memcpy(copy_dest, LowOut.data(), LowOut.size());
-
-    cout << "Zstd compression: " << HighOut.size() << endl;
-    cout << "Video compression: " << LowOut.size() << endl;
 }
 
 DepthResult DepthCompressor::Decompress(

@@ -49,7 +49,7 @@
     lossless compressor as well before deciding to use the lossy version.
 
     The results vary with the scene.  For the unit test set, the lossless
-    encoder gets 4-5 Mbps.  The lossy encoder gets 2 Mbps with decent quality.
+    encoder gets 4-5 Mbps.  The lossy encoder gets 2.5 Mbps with okay quality.
     For the 320x288 depth mode of the Azure Kinect DK I would not recommend
     setting the bitrate lower than 2 Mbps because quality goes off a cliff.
     If this difference is not significant (e.g. streaming just one camera)
