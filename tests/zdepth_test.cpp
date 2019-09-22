@@ -86,122 +86,6 @@ uint64_t GetTimeUsec()
 
 
 //------------------------------------------------------------------------------
-// RVL
-
-// RVL library for performance baseline
-
-// Paper: https://www.microsoft.com/en-us/research/publication/fast-lossless-depth-image-compression/
-// Video presentation: https://www.youtube.com/watch?v=WYU2upBs2hA
-
-// RVL author suggests that H.264 is a bad idea to use.
-// But it seems like some masking can be used to avoid messing up the edges...
-
-// Effective Compression of Range Data Streams for Remote Robot Operations using H.264
-// http://www2.informatik.uni-freiburg.de/~stachnis/pdf/nenci14iros.pdf
-
-// Adapting Standard Video Codecs for Depth Streaming
-// http://reality.cs.ucl.ac.uk/projects/depth-streaming/depth-streaming.pdf
-
-inline void EncodeVLE(int* &pBuffer, int& word, int& nibblesWritten, int value)
-{
-    do
-    {
-        int nibble = value & 0x7; // lower 3 bits
-        if (value >>= 3) {
-            nibble |= 0x8; // more to come
-        }
-        word <<= 4;
-        word |= nibble;
-        if (++nibblesWritten == 8) // output word
-        {
-            *pBuffer++ = word;
-            nibblesWritten = 0;
-            word = 0;
-        }
-    } while (value);
-}
-
-inline int DecodeVLE(int* &pBuffer, int& word, int& nibblesWritten)
-{
-    unsigned int nibble;
-    int value = 0, bits = 29;
-    do
-    {
-        if (!nibblesWritten)
-        {
-            word = *pBuffer++; // load word
-            nibblesWritten = 8;
-        }
-        nibble = word & 0xf0000000;
-        value |= (nibble << 1) >> bits;
-        word <<= 4;
-        nibblesWritten--;
-        bits -= 3;
-    } while (nibble & 0x80000000);
-    return value;
-}
-
-int CompressRVL(short* input, char* output, int numPixels)
-{
-    int word, nibblesWritten;
-    int *pBuffer;
-    int *buffer = pBuffer = (int*)output;
-    nibblesWritten = 0;
-    short *end = input + numPixels;
-    short previous = 0;
-    while (input != end)
-    {
-        int zeros = 0, nonzeros = 0;
-        for (; (input != end) && !*input; input++, zeros++);
-        EncodeVLE(pBuffer, word, nibblesWritten, zeros); // number of zeros
-        for (short* p = input; (p != end) && *p++; nonzeros++);
-        EncodeVLE(pBuffer, word, nibblesWritten, nonzeros); // number of nonzeros
-        for (int i = 0; i < nonzeros; i++)
-        {
-            short current = *input++;
-            int delta = current - previous;
-            int positive = (delta << 1) ^ (delta >> 31);
-            EncodeVLE(pBuffer, word, nibblesWritten, positive); // nonzero value
-            previous = current;
-        }
-    }
-    if (nibblesWritten) // last few values
-    {
-        *pBuffer++ = word << 4 * (8 - nibblesWritten);
-    }
-    return int((char*)pBuffer - (char*)buffer); // num bytes
-}
-
-void DecompressRVL(char* input, short* output, int numPixels)
-{
-    int word, nibblesWritten;
-    int *pBuffer;
-    int *buffer = pBuffer = (int*)input;
-    nibblesWritten = 0;
-    short current, previous = 0;
-    int numPixelsToDecode = numPixels;
-    while (numPixelsToDecode)
-    {
-        int zeros = DecodeVLE(pBuffer, word, nibblesWritten); // number of zeros
-        numPixelsToDecode -= zeros;
-        for (; zeros; zeros--) {
-            *output++ = 0;
-        }
-        int nonzeros = DecodeVLE(pBuffer, word, nibblesWritten); // number of nonzeros
-        numPixelsToDecode -= nonzeros;
-        for (; nonzeros; nonzeros--)
-        {
-            int positive = DecodeVLE(pBuffer, word, nibblesWritten); // nonzero value
-            int delta = (positive >> 1) ^ -(positive & 1);
-            current = previous + delta;
-            *output++ = current;
-            previous = current;
-        }
-    }
-}
-
-
-//------------------------------------------------------------------------------
 // Test Vectors
 
 #include "test_vectors.inl"
@@ -215,29 +99,119 @@ using namespace std;
 
 static zdepth::DepthCompressor compressor, decompressor;
 
+static void GraphResult(size_t n, const uint16_t* depth, const uint16_t* frame)
+{
+    const int width = 200;
+    const int height = 280;
+    const int stride = 320;
+    const int offx = 100;
+    const int offy = 0;
+
+    cout << "Error plot:" << endl;
+    for (int yy = 0; yy < height; ++yy) {
+        for (int xx = 0; xx < width; ++xx) {
+            const int i = xx + offx + (yy + offy) * stride;
+            const int x = AzureKinectQuantizeDepth(depth[i]);
+            const int y = AzureKinectQuantizeDepth(frame[i]);
+
+            unsigned z = std::abs(x - y);
+            if (z == 0) {
+                cout << " ";
+            }
+            else if (z < 16) {
+                cout << ".";
+            }
+            else {
+                cout << "!";
+            }
+        }
+        cout << endl;
+    }
+
+#if 0
+    cout << "High bits plot:" << endl;
+    for (int yy = 0; yy < height; ++yy) {
+        for (int xx = 0; xx < width; ++xx) {
+            const int i = xx + offx + (yy + offy) * stride;
+            const int x = AzureKinectQuantizeDepth(frame[i]);
+
+            if (x == 0) {
+                cout << " ";
+            }
+            else if (x & 1) {
+                cout << ".";
+            }
+            else {
+                cout << ",";
+            }
+        }
+        cout << endl;
+    }
+#endif
+}
+
 static bool CompareFrames(size_t n, const uint16_t* depth, const uint16_t* frame)
 {
-    std::vector<unsigned> error_hist(512);
+    std::vector<unsigned> error_hist(256);
 
     for (int i = 0; i < n; ++i) {
         const int x = AzureKinectQuantizeDepth(depth[i]);
         const int y = AzureKinectQuantizeDepth(frame[i]);
+
         unsigned z = std::abs(x - y);
         if (z == 0) {
             continue;
         }
-        if (z >= 512) {
-            z = 511;
+        if (z >= 256) {
+            z = 256;
         }
-        error_hist[z] += z;
+        error_hist[z]++;
     }
 #if 1
-    for (int i = 0; i < 512; ++i) {
+    for (int i = 0; i < 256; ++i) {
         if (error_hist[i]) {
             cout << "Hist: " << i << " : " << error_hist[i] << endl;
         }
     }
 #endif
+
+    //GraphResult(n, depth, frame);
+
+    return true;
+}
+
+bool TestRescale()
+{
+    {
+        std::vector<uint16_t> q;
+
+        // start
+        for (unsigned i = 0; i < 2048; ++i)
+        {
+            // end
+            for (unsigned j = i; j < 2048; ++j)
+            {
+                int n = j - i + 1;
+                q.resize(n);
+
+                for (unsigned k = 0; k < n; ++k) {
+                    q[k] = k + i;
+                }
+
+                uint16_t min_value, max_value;
+                RescaleImage_11Bits(q, min_value, max_value);
+                UndoRescaleImage_11Bits(min_value, max_value, q);
+
+                for (unsigned k = 0; k < n; ++k) {
+                    if (q[k] != k + i) {
+                        cout << "FAILED" << endl;
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -247,12 +221,11 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 
     const uint64_t t0 = GetTimeUsec();
 
-    DepthParams params;
+    VideoParameters params;
     params.Width = Width;
     params.Height = Height;
-    params.Codec = VideoType::H265;
-    params.MaxBitrate = 5000000;
-    params.AverageBitrate = 3000000;
+    params.Type = VideoType::H264;
+    params.Bitrate = 2000000;
     params.Fps = 30;
 
     compressor.Compress(
@@ -325,22 +298,22 @@ int main(int argc, char* argv[])
 
     cout << endl;
     cout << "-------------------------------------------------------------------" << endl;
-    cout << "Test vector: Room" << endl;
-    cout << "-------------------------------------------------------------------" << endl;
-
-    if (!TestPattern(TestVector0_Room0, TestVector0_Room1)) {
-        cout << "Test failure: Room test vector" << endl;
-        return -1;
-    }
-
-    cout << endl;
-    cout << "-------------------------------------------------------------------" << endl;
     cout << "Test vector: Ceiling" << endl;
     cout << "-------------------------------------------------------------------" << endl;
 
     if (!TestPattern(TestVector1_Ceiling0, TestVector1_Ceiling1)) {
         cout << "Test failure: Ceiling test vector" << endl;
         return -2;
+    }
+
+    cout << endl;
+    cout << "-------------------------------------------------------------------" << endl;
+    cout << "Test vector: Room" << endl;
+    cout << "-------------------------------------------------------------------" << endl;
+
+    if (!TestPattern(TestVector0_Room0, TestVector0_Room1)) {
+        cout << "Test failure: Room test vector" << endl;
+        return -1;
     }
 
     cout << endl;

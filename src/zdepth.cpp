@@ -107,11 +107,11 @@ const char* DepthResultString(DepthResult result)
 {
     switch (result)
     {
+    case DepthResult::Success: return "Success";
     case DepthResult::FileTruncated: return "FileTruncated";
     case DepthResult::WrongFormat: return "WrongFormat";
     case DepthResult::Corrupted: return "Corrupted";
-    case DepthResult::MissingPFrame: return "MissingPFrame";
-    case DepthResult::Success: return "Success";
+    case DepthResult::MissingFrame: return "MissingFrame";
     default: break;
     }
     return "Unknown";
@@ -226,10 +226,23 @@ void RescaleImage_11Bits(
     const int size = static_cast<int>( quantized.size() );
 
     // Find extrema
-    unsigned smallest = data[0];
+    int i;
+    for (i = 0; i < size; ++i) {
+        if (data[i] != 0) {
+            break;
+        }
+    }
+    if (i >= size) {
+        min_value = max_value = 0;
+        return;
+    }
+    unsigned smallest = data[i];
     unsigned largest = smallest;
-    for (int i = 1; i < size; ++i) {
+    for (; i < size; ++i) {
         const unsigned x = data[i];
+        if (x == 0) {
+            continue;
+        }
         if (smallest > x) {
             smallest = x;
         }
@@ -241,24 +254,37 @@ void RescaleImage_11Bits(
     min_value = static_cast<uint16_t>( smallest );
     max_value = static_cast<uint16_t>( largest );
 
-    const unsigned range = largest - smallest;
-    if (range == 0) {
+    // Handle edge cases
+    const unsigned range = largest - smallest + 1;
+    if (range >= 2048) {
+        return;
+    }
+    if (range <= 1) {
         if (smallest != 0) {
-            for (int i = 0; i < size; ++i) {
-                data[i] = 0;
+            for (i = 0; i < size; ++i) {
+                unsigned x = data[i];
+                if (x == 0) {
+                    continue;
+                }
+                data[i] = 1;
             }
         }
         return;
     }
     const unsigned rounder = range / 2;
 
-    libdivide::divider<unsigned, libdivide::BRANCHFREE> fast_d(range);
+    using branchfree_t = libdivide::branchfree_divider<unsigned>;
+    branchfree_t fast_d = range;
 
     // Rescale the data
-    for (int i = 0; i < size; ++i) {
-        const unsigned x = data[i] - smallest;
-        unsigned y = (x * 2048 + rounder) / fast_d;
-        data[i] = static_cast<uint16_t>(y);
+    for (i = 0; i < size; ++i) {
+        unsigned x = data[i];
+        if (x == 0) {
+            continue;
+        }
+        x -= smallest;
+        unsigned y = (x * 2047 + rounder) / fast_d;
+        data[i] = static_cast<uint16_t>(y + 1);
     }
 }
 
@@ -271,83 +297,30 @@ void UndoRescaleImage_11Bits(
     const int size = static_cast<int>( quantized.size() );
 
     const unsigned smallest = min_value;
-    const unsigned range = max_value - smallest;
-    if (range == 0) {
+    const unsigned range = max_value - smallest + 1;
+    if (range >= 2048) {
         return;
     }
-
-    // Rescale the data
-    for (int i = 0; i < size; ++i) {
-        unsigned x = data[i];
-        const unsigned y = (x * range + 1024) / 2048;
-        data[i] = static_cast<uint16_t>(y);
-    }
-}
-
-void RescaleImage_8Bits(
-    std::vector<uint8_t>& quantized,
-    uint8_t& min_value,
-    uint8_t& max_value)
-{
-    uint8_t* data = quantized.data();
-    const int size = static_cast<int>( quantized.size() );
-
-    // Find extrema
-    unsigned smallest = data[0];
-    unsigned largest = smallest;
-    for (int i = 1; i < size; ++i) {
-        const unsigned x = data[i];
-        if (smallest > x) {
-            smallest = x;
-        }
-        if (largest < x) {
-            largest = x;
-        }
-    }
-
-    min_value = static_cast<uint8_t>( smallest );
-    max_value = static_cast<uint8_t>( largest );
-
-    const unsigned range = largest - smallest;
-    if (range == 0) {
-        if (smallest != 0) {
-            for (int i = 0; i < size; ++i) {
-                data[i] = 0;
+    if (range <= 1) {
+        for (int i = 0; i < size; ++i) {
+            unsigned x = data[i];
+            if (x == 0) {
+                continue;
             }
+            data[i] = static_cast<uint16_t>( x - 1 + smallest );
         }
-        return;
-    }
-    const unsigned rounder = range / 2;
-
-    libdivide::divider<unsigned, libdivide::BRANCHFREE> fast_d(range);
-
-    // Rescale the data
-    for (int i = 0; i < size; ++i) {
-        const unsigned x = data[i] - smallest;
-        unsigned y = (x * 256 + rounder) / fast_d;
-        data[i] = static_cast<uint8_t>(y);
-    }
-}
-
-void UndoRescaleImage_8Bits(
-    uint8_t min_value,
-    uint8_t max_value,
-    std::vector<uint8_t>& quantized)
-{
-    uint8_t* data = quantized.data();
-    const int size = static_cast<int>( quantized.size() );
-
-    const unsigned smallest = min_value;
-    const unsigned range = max_value - smallest;
-    if (range == 0) {
         return;
     }
 
     // Rescale the data
     for (int i = 0; i < size; ++i) {
         unsigned x = data[i];
-        const unsigned y = (x * range + 128) / 256;
-        data[i] = static_cast<uint8_t>(y);
+        if (x == 0) {
+            continue;
+        }
+        --x;
+        const unsigned y = (x * range + 1023) / 2047;
+        data[i] = static_cast<uint16_t>(y + smallest);
     }
 }
 
@@ -399,7 +372,7 @@ bool ZstdDecompress(
 // DepthCompressor
 
 void DepthCompressor::Compress(
-    const DepthParams& params,
+    const VideoParameters& params,
     const uint16_t* unquantized_depth,
     std::vector<uint8_t>& compressed,
     bool keyframe)
@@ -410,7 +383,7 @@ void DepthCompressor::Compress(
     if (keyframe) {
         header.Flags |= DepthFlags_Keyframe;
     }
-    if (params.Codec == VideoType::H265) {
+    if (params.Type == VideoType::H265) {
         header.Flags |= DepthFlags_HEVC;
     }
     header.Width = static_cast<uint16_t>( params.Width );
@@ -418,37 +391,22 @@ void DepthCompressor::Compress(
     const int n = params.Width * params.Height;
 
     // Enforce keyframe if we have not compressed anything yet
-    if (CompressedFrameNumber == 0) {
+    if (FrameCount == 0) {
         keyframe = true;
     }
-    header.FrameNumber = static_cast<uint16_t>( CompressedFrameNumber );
-    ++CompressedFrameNumber;
+    header.FrameNumber = static_cast<uint16_t>( FrameCount );
+    ++FrameCount;
 
-    // Quantize the depth image
     QuantizeDepthImage(n, unquantized_depth, QuantizedDepth);
-
-    // Rescale depth image to 0...2047
-    //RescaleImage_11Bits(QuantizedDepth, header.MinimumDepth, header.MaximumDepth);
-
+    RescaleImage_11Bits(QuantizedDepth, header.MinimumDepth, header.MaximumDepth);
     Filter(QuantizedDepth);
-
-    //RescaleImage_8Bits(Low, header.LowMinimum, header.LowMaximum);
-
     ZstdCompress(High, HighOut);
 
     header.HighUncompressedBytes = static_cast<uint32_t>( High.size() );
     header.HighCompressedBytes = static_cast<uint32_t>( HighOut.size() );
 
-    VideoParameters video_params;
-    video_params.Type = params.Codec;
-    video_params.AverageBitrate = params.AverageBitrate;
-    video_params.MaxBitrate = params.MaxBitrate;
-    video_params.Fps = params.Fps;
-    video_params.Width = params.Width;
-    video_params.Height = params.Height;
-
     Codec.EncodeBegin(
-        video_params,
+        params,
         keyframe,
         Low,
         LowOut);
@@ -495,12 +453,17 @@ DepthResult DepthCompressor::Decompress(
     }
     const unsigned frame_number = header->FrameNumber;
 
-#if 0 // This is okay I guess...
+    // We can only start decoding on a keyframe because these contain SPS/PPS.
+    if (!keyframe && FrameCount == 0) {
+        return DepthResult::MissingFrame;
+    }
+    ++FrameCount;
+
+#if 0 // This is okay I guess since we are using intra-frame compression.
     if (!keyframe && frame_number != CompressedFrameNumber + 1) {
         return DepthResult::MissingPFrame;
     }
 #endif
-    CompressedFrameNumber = frame_number;
 
     width = header->Width;
     height = header->Height;
@@ -544,13 +507,10 @@ DepthResult DepthCompressor::Decompress(
 
     src += header->LowCompressedBytes;
 
-    //UndoRescaleImage_8Bits(header->LowMinimum, header->LowMaximum, Low);
-
     Unfilter(width, height, depth_out);
-
-    //UndoRescaleImage_11Bits(header->MinimumDepth, header->MaximumDepth, QuantizedDepth);
-
+    UndoRescaleImage_11Bits(header->MinimumDepth, header->MaximumDepth, depth_out);
     DequantizeDepthImage(depth_out);
+
     return DepthResult::Success;
 }
 
@@ -564,10 +524,12 @@ void DepthCompressor::Filter(
     const int n = static_cast<int>( depth_in.size() );
     const uint16_t* depth = depth_in.data();
 
-    // Split data into high/low parts
-    High.resize(n / 2);
-    Low.resize(n + n / 2);
+    High.clear();
+    Low.clear();
+    High.resize(n / 2); // One byte for every two depth values
+    Low.resize(n + n / 2); // Leave room for unused chroma channel
 
+    // Split data into high/low parts
     for (int i = 0; i < n; i += 2) {
         const uint16_t depth_0 = depth[i];
         const uint16_t depth_1 = depth[i + 1];
@@ -616,11 +578,13 @@ void DepthCompressor::Unfilter(
     const int n = width * height;
     depth_out.resize(n);
     uint16_t* depth = depth_out.data();
+    const uint8_t* low_data = Low.data();
+    const uint8_t* high_data = High.data();
 
     for (int i = 0; i < n; i += 2) {
-        const uint8_t high = High[i / 2];
-        uint8_t low_0 = Low[i];
-        uint8_t low_1 = Low[i + 1];
+        const uint8_t high = high_data[i / 2];
+        uint8_t low_0 = low_data[i];
+        uint8_t low_1 = low_data[i + 1];
         unsigned high_0 = high & 15;
         unsigned high_1 = high >> 4;
 
@@ -631,7 +595,14 @@ void DepthCompressor::Unfilter(
             if (high_0 & 1) {
                 low_0 = 255 - low_0;
             }
-            depth[i] = static_cast<uint16_t>(low_0 | (high_0 << 8));
+            uint16_t x = static_cast<uint16_t>(low_0 | (high_0 << 8));
+
+            // This value is expected to always be at least 1
+            if (x == 0) {
+                x = 1;
+            }
+
+            depth[i] = x;
         }
 
         if (high_1 == 0) {
@@ -641,7 +612,14 @@ void DepthCompressor::Unfilter(
             if (high_1 & 1) {
                 low_1 = 255 - low_1;
             }
-            depth[i + 1] = static_cast<uint16_t>(low_1 | (high_1 << 8));
+            uint16_t y = static_cast<uint16_t>(low_1 | (high_1 << 8));
+
+            // This value is expected to always be at least 1
+            if (y == 0) {
+                y = 1;
+            }
+
+            depth[i + 1] = y;
         }
     }
 }

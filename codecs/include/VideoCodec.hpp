@@ -90,14 +90,22 @@ enum class VideoType
 
 struct VideoParameters
 {
+    // Using H265 instead here leads to files with half the error that are about
+    // 25% smaller.  But the encoder/decoder is not always available.
     VideoType Type = VideoType::H264;
+
+    // Depth image resolution
     int Width = 0, Height = 0;
+
+    // Frames per second of camera
     int Fps = 30;
 
-    // We use the encoder in VBR mode, where an average bitrate is desired but a
-    // maximum burst bitrate can also be specified to avoid quality loss.
-    int AverageBitrate = 1000000;
-    int MaxBitrate = 2000000;
+    // To tell the encoder to hit a target bitrate, set Bitrate non-zero.
+    // Otherwise it will use the QP variable to control the encoder.
+    int Bitrate = 1000000;
+
+    // Quality, lower is better
+    int Qp = 0;
 };
 
 enum class VideoBackend

@@ -13,14 +13,55 @@
 */
 
 /*
+    To compress depth data use:
+
+        DepthCompressor x;
+        x.Compress(...);
+
+    To decompress depth data use:
+
+        DepthCompressor y;
+        y.Decompress(...);
+
+    Application notes:
+
+    Only one or two compressors can be run at a time with hardware acceleration,
+    so for multiple cameras, the depth data can be combined together into one
+    large depth image and compressed all at once.
+
+    For streaming, viewers may join and leave the stream at any time.
+    New viewers are going to need the SPS/PPS/VPS information in the keyframes
+    of the video stream at a minimum to decode, so either generating periodic
+    keyframes or storing off ancient keyframes and then jumping ahead to the
+    latest video frames seem like decent options.
+*/
+
+/*
+    Lossy versus lossless:
+
+    The lossless encoder is in a separate repo here:
+    https://github.com/catid/Zdepth
+    The two are split because the lossy version is harder to use.
+
+    You may want to compare the quality and size of the output with a
+    lossless compressor as well before deciding to use the lossy version.
+
+    The results vary with the scene.  For the unit test set, the lossless
+    encoder gets 4-5 Mbps.  The lossy encoder gets 2 Mbps with decent quality.
+    For the 320x288 depth mode of the Azure Kinect DK I would not recommend
+    setting the bitrate lower than 2 Mbps because quality goes off a cliff.
+    If this difference is not significant (e.g. streaming just one camera)
+    then the lossless version may be a decent option.
+*/
+
+/*
     Compression algorithm:
 
         (1) Special case for zero.
             This ensures that the H.264 encoders do not flip zeroes.
         (1) Quantize depth to 11 bits based on sensor accuracy at range.
             Eliminate data that we do not need to encode.
-        (2) Rescale the data so that it ranges from 0 to 2047.
-            This is done to reduce the problems introduced by H.264.
+        (2) Rescale the data so that it ranges full-scale from 0 to 2047.
         (3) Compress high 3 bits with Zstd.
         (4) Compress low 8 bits with H.264.
 
@@ -38,13 +79,7 @@
             encoder so to solve that we fold every other 8-bit range
             by subtracting it from 255.  So instead the roll-over becomes
             253, 254, 255, 254, 253, ... 1, 0, 1, 2, ...
-            This cuts the error about in half in testing.
-        (2) Rescale low bits to 0..255 range.
-            After folding the data, we find the smallest and largest
-            values in the image, and rescale the image values back to the
-            0..255 range so that errors introduced by lossy compression
-            have less impact on the result.
-        (3) Compress the resulting data as an image with H.264.
+        (2) Compress the resulting data as an image with a video encoder.
             We use the best hardware acceleration available on the platform
             and attempt to run the multiple encoders in parallel.
 
@@ -140,13 +175,20 @@ struct DepthHeader
 
 #pragma pack(pop)
 
+// No error codes are unrecoverable.  To recover, simply keep passing frames
+// into the decoder until decoding succeeds.
 enum class DepthResult
 {
+    Success,
+
+    // File format is invalid: Possibly packetloss?
     FileTruncated,
     WrongFormat,
     Corrupted,
-    MissingPFrame, // Missing previous referenced frame
-    Success
+
+    // This is a special error code that means that the frame could not be
+    // decoded because it references other frames that have not been received.
+    MissingFrame,
 };
 
 const char* DepthResultString(DepthResult result);
@@ -238,21 +280,6 @@ void UndoRescaleImage_11Bits(
     uint16_t max_value,
     std::vector<uint16_t>& quantized);
 
-// Rescale depth for a whole image to the range of 0..255.
-// This modifies the data in-place.
-// Returns the minimum and maximum values in the data, needed for the decoder.
-void RescaleImage_8Bits(
-    std::vector<uint8_t>& quantized,
-    uint8_t& min_value,
-    uint8_t& max_value);
-
-// Undo image rescaling.
-// This modifies the data in-place.
-void UndoRescaleImage_8Bits(
-    uint8_t min_value,
-    uint8_t max_value,
-    std::vector<uint8_t>& quantized);
-
 
 //------------------------------------------------------------------------------
 // Zstd
@@ -271,22 +298,13 @@ bool ZstdDecompress(
 //------------------------------------------------------------------------------
 // DepthCompressor
 
-struct DepthParams
-{
-    int Width = 0, Height = 0;
-    VideoType Codec = VideoType::H264;
-    int MaxBitrate = 2000000;
-    int AverageBitrate = 1000000;
-    int Fps = 30;
-};
-
 class DepthCompressor
 {
 public:
     // Compress depth array to buffer
     // Set keyframe to indicate this frame should not reference the previous one
     void Compress(
-        const DepthParams& params,
+        const VideoParameters& params,
         const uint16_t* unquantized_depth,
         std::vector<uint8_t>& compressed,
         bool keyframe);
@@ -303,7 +321,7 @@ public:
 protected:
     // Depth values quantized
     std::vector<uint16_t> QuantizedDepth;
-    unsigned CompressedFrameNumber = 0;
+    uint64_t FrameCount = 0;
 
     std::vector<uint8_t> High;
     std::vector<uint8_t> Low;

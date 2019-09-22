@@ -167,20 +167,31 @@ bool VideoCodec::EncodeBeginNvenc(
             // https://slhck.info/video/2017/03/01/rate-control.html
             // Our goal is to have constant quality and low latency for streaming.
 
-            // Choose VBR mode allowing for spikes for tricky frames
-            // NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ, NV_ENC_PARAMS_RC_CBR_HQ, NV_ENC_PARAMS_RC_VBR_HQ
-            encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_VBR_HQ;
-            encodeConfig.rcParams.averageBitRate = Params.AverageBitrate;
-            encodeConfig.rcParams.maxBitRate = Params.MaxBitrate;
+            if (Params.Bitrate != 0)
+            {
+                // Choose VBR mode allowing for spikes for tricky frames
+                // NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ: Error bound is smaller
+                // NV_ENC_PARAMS_RC_CBR_HQ: Seems to have a longer tail of errors
+                // NV_ENC_PARAMS_RC_VBR_HQ: Also long error tail
+                encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR_LOWDELAY_HQ;
+                encodeConfig.rcParams.averageBitRate = Params.Bitrate;
+                encodeConfig.rcParams.maxBitRate = Params.Bitrate;
 
-            // Tune VBV size 
-            encodeConfig.rcParams.vbvBufferSize = Params.AverageBitrate / Params.Fps;
-            encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
+                // Tune VBV size 
+                encodeConfig.rcParams.vbvBufferSize = Params.Bitrate / Params.Fps;
+                encodeConfig.rcParams.vbvInitialDelay = encodeConfig.rcParams.vbvBufferSize;
+            }
+            else
+            {
+                // For constraining the quality loss: NV_ENC_PARAMS_RC_CONSTQP
+                encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CONSTQP;
+            }
 
-            // Enable AQ
-            encodeConfig.rcParams.enableTemporalAQ = 1;
-            encodeConfig.rcParams.enableAQ = 1; // Spatial AQ
-            encodeConfig.rcParams.aqStrength = 0; // TBD
+            // Disable adaptive quantization for this type of data.
+            // It leads to much higher long tail errors.
+            encodeConfig.rcParams.enableTemporalAQ = 0;
+            encodeConfig.rcParams.enableAQ = 0; // Spatial
+            encodeConfig.rcParams.aqStrength = 1; // Lower is better
 
             // Disable B-frames
             encodeConfig.rcParams.zeroReorderDelay = 1;
@@ -216,8 +227,8 @@ bool VideoCodec::EncodeBeginNvenc(
         pic_params.inputPitch = frame->pitch;
 
         if (keyframe) {
-            // NV_ENC_PIC_FLAG_OUTPUT_SPSPPS not needed
-            pic_params.encodePicFlags |= NV_ENC_PIC_FLAG_FORCEIDR;
+            // Force an IDR and prepend SPS, PPS units
+            pic_params.encodePicFlags |= NV_ENC_PIC_FLAG_OUTPUT_SPSPPS | NV_ENC_PIC_FLAG_FORCEIDR;
             pic_params.pictureType = NV_ENC_PIC_TYPE_IDR;
         } else {
             pic_params.pictureType = NV_ENC_PIC_TYPE_P;
