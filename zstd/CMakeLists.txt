@@ -25,4 +25,4 @@ target_include_directories(zstd PUBLIC
     "$<INSTALL_INTERFACE:include>"
 )
 
-install(TARGETS zstd EXPORT zdepth DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+install(TARGETS zstd EXPORT zdepth LIBRARY DESTINATION lib)
