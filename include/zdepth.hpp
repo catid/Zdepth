@@ -83,12 +83,16 @@ static const int kDepthHeaderBytes = 40;
     frames that cannot be decoded due to a missing previous frame.
 */
 
+// Size of a block for predictor selection purposes
+static const int kBlockSize = 8;
+
 enum class DepthResult
 {
     FileTruncated,
     WrongFormat,
     Corrupted,
     MissingPFrame, // Missing previous referenced frame
+    BadDimensions, // Width % kBlockSize != 0 and/or Height % kBlockSize != 0
     Success
 };
 
@@ -265,7 +269,8 @@ class DepthCompressor
 public:
     // Compress depth array to buffer
     // Set keyframe to indicate this frame should not reference the previous one
-    void Compress(
+    // Returns DepthResult::Success if the depth can be compressed
+    DepthResult Compress(
         int width,
         int height,
         const uint16_t* unquantized_depth,

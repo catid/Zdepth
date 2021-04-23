@@ -219,6 +219,16 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 {
     std::vector<uint8_t> compressed;
 
+    if(Width % kBlockSize != 0) {
+        cout << "Failed: Width, " << Width <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
+        return false;
+    }
+
+    if(Height % kBlockSize != 0) {
+        cout << "Failed: Height, " << Height <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
+        return false;
+    }
+
     const uint64_t t0 = GetTimeUsec();
 
     compressor.Compress(Width, Height, frame, compressed, keyframe);
