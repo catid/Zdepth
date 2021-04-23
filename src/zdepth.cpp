@@ -520,7 +520,7 @@ void DepthCompressor::CompressImage(
                     }
                 }
             } // next depth pixel
-        } 
+        }
     } // next block
 }
 
@@ -804,7 +804,7 @@ bool DepthCompressor::DecompressImage(
                     row[x] = static_cast<uint16_t>( d );
                 }
             } // next depth pixel
-        } 
+        }
     } // next block
 
     return true;

@@ -274,7 +274,7 @@ public:
 
     // Decompress buffer to depth array.
     // Resulting depth buffer is row-first, stride=width*2 (no surprises).
-    // Returns false if input is invalid
+    // Returns DepthResult::Success if original depth can be recovered
     DepthResult Decompress(
         const std::vector<uint8_t>& compressed,
         int& width,
