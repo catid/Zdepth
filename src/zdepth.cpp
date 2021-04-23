@@ -334,6 +334,7 @@ DepthResult DepthCompressor::Compress(
     std::vector<uint8_t>& compressed,
     bool keyframe)
 {
+    // Enforce that image dimensions are multiples of the block size
     if(width % kBlockSize != 0 || height % kBlockSize != 0) {
         return DepthResult::BadDimensions;
     }
