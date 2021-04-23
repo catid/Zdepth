@@ -10,9 +10,6 @@ namespace zdepth {
 //------------------------------------------------------------------------------
 // Constants
 
-// Size of a block for predictor selection purposes
-static const int kBlockSize = 8;
-
 // Zstd compression level
 static const int kZstdLevel = 1;
 
@@ -24,6 +21,7 @@ const char* DepthResultString(DepthResult result)
     case DepthResult::WrongFormat: return "WrongFormat";
     case DepthResult::Corrupted: return "Corrupted";
     case DepthResult::MissingPFrame: return "MissingPFrame";
+    case DepthResult::BadDimensions: return "BadDimensions";
     case DepthResult::Success: return "Success";
     default: break;
     }
@@ -329,13 +327,17 @@ void Unpack12(
 //------------------------------------------------------------------------------
 // DepthCompressor
 
-void DepthCompressor::Compress(
+DepthResult DepthCompressor::Compress(
     int width,
     int height,
     const uint16_t* unquantized_depth,
     std::vector<uint8_t>& compressed,
     bool keyframe)
 {
+    if(width % kBlockSize != 0 || height % kBlockSize != 0) {
+        return DepthResult::BadDimensions;
+    }
+
     // Enforce keyframe if we have not compressed anything yet
     if (CompressedFrameNumber == 0) {
         keyframe = true;
@@ -377,6 +379,8 @@ void DepthCompressor::Compress(
     ZstdCompress(Blocks, BlocksOut);
 
     WriteCompressedFile(width, height, keyframe, compressed);
+
+    return DepthResult::Success;
 }
 
 void DepthCompressor::CompressImage(
@@ -520,7 +524,7 @@ void DepthCompressor::CompressImage(
                     }
                 }
             } // next depth pixel
-        } 
+        }
     } // next block
 }
 
@@ -804,7 +808,7 @@ bool DepthCompressor::DecompressImage(
                     row[x] = static_cast<uint16_t>( d );
                 }
             } // next depth pixel
-        } 
+        }
     } // next block
 
     return true;

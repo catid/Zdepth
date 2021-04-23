@@ -219,6 +219,16 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 {
     std::vector<uint8_t> compressed;
 
+    if(Width % kBlockSize != 0) {
+        cout << "Failed: Width, " << Width <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
+        return false;
+    }
+
+    if(Height % kBlockSize != 0) {
+        cout << "Failed: Height, " << Height <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
+        return false;
+    }
+
     const uint64_t t0 = GetTimeUsec();
 
     compressor.Compress(Width, Height, frame, compressed, keyframe);
@@ -251,7 +261,7 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 
     const unsigned original_bytes = Width * Height * 2;
     cout << endl;
-    cout << "Zdepth Compression: " << original_bytes << " bytes -> " << compressed.size() << 
+    cout << "Zdepth Compression: " << original_bytes << " bytes -> " << compressed.size() <<
         " bytes (ratio = " << original_bytes / (float)compressed.size() << ":1) ("
         << (compressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
     cout << "Zdepth Speed: Compressed in " << (t1 - t0) / 1000.f << " msec. Decompressed in " << (t2 - t1) / 1000.f << " msec" << endl;
@@ -287,13 +297,13 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
     }
 
     cout << endl;
-    cout << "Quantization+RVL Compression: " << original_bytes << " bytes -> " << compressed.size() << 
+    cout << "Quantization+RVL Compression: " << original_bytes << " bytes -> " << compressed.size() <<
         " bytes (ratio = " << original_bytes / (float)compressed.size() << ":1) ("
         << (compressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
     cout << "Quantization+RVL Speed: Compressed in " << (t4 - t3) / 1000.f << " msec. Decompressed in " << (t8 - t7) / 1000.f << " msec" << endl;
 
     cout << endl;
-    cout << "Quantization+RVL+Zstd Compression: " << original_bytes << " bytes -> " << recompressed.size() << 
+    cout << "Quantization+RVL+Zstd Compression: " << original_bytes << " bytes -> " << recompressed.size() <<
         " bytes (ratio = " << original_bytes / (float)recompressed.size() << ":1) ("
         << (recompressed.size() * 30 * 8) / 1000000.f << " Mbps @ 30 FPS)" << endl;
     cout << "Quantization+RVL+Zstd Speed: Compressed in " << (t6 - t5 + t4 - t3) / 1000.f << " msec. Decompressed in " << (t8 - t6) / 1000.f << " msec" << endl;
