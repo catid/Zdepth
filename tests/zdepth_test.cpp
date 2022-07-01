@@ -143,7 +143,8 @@ inline int DecodeVLE(int* &pBuffer, int& word, int& nibblesWritten)
 
 int CompressRVL(short* input, char* output, int numPixels)
 {
-    int word, nibblesWritten;
+    int word{ 0 };
+    int nibblesWritten;
     int *pBuffer;
     int *buffer = pBuffer = (int*)output;
     nibblesWritten = 0;
@@ -175,8 +176,7 @@ int CompressRVL(short* input, char* output, int numPixels)
 void DecompressRVL(char* input, short* output, int numPixels)
 {
     int word, nibblesWritten;
-    int *pBuffer;
-    int *buffer = pBuffer = (int*)input;
+    int *pBuffer = (int*)input;
     nibblesWritten = 0;
     short current, previous = 0;
     int numPixelsToDecode = numPixels;
@@ -193,7 +193,7 @@ void DecompressRVL(char* input, short* output, int numPixels)
         {
             int positive = DecodeVLE(pBuffer, word, nibblesWritten); // nonzero value
             int delta = (positive >> 1) ^ -(positive & 1);
-            current = previous + delta;
+            current = previous + static_cast<short>(delta);
             *output++ = current;
             previous = current;
         }
@@ -219,15 +219,8 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
 {
     std::vector<uint8_t> compressed;
 
-    if(Width % kBlockSize != 0) {
-        cout << "Failed: Width, " << Width <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
-        return false;
-    }
-
-    if(Height % kBlockSize != 0) {
-        cout << "Failed: Height, " << Height <<  ", is not a multiple of Block Size, " << kBlockSize << endl;
-        return false;
-    }
+    static_assert(Width % kBlockSize == 0, "Width is not a multiple of block size.");
+    static_assert(Height % kBlockSize == 0, "Height is not a multiple of block size.");
 
     const uint64_t t0 = GetTimeUsec();
 
@@ -282,7 +275,7 @@ bool TestFrame(const uint16_t* frame, bool keyframe)
     const uint64_t t5 = GetTimeUsec();
     ZstdCompress(compressed, recompressed);
     const uint64_t t6 = GetTimeUsec();
-    ZstdDecompress(recompressed.data(), recompressed.size(), compressed.size(), decompressed);
+    ZstdDecompress(recompressed.data(), static_cast<int>(recompressed.size()), static_cast<int>(compressed.size()), decompressed);
     const uint64_t t7 = GetTimeUsec();
     quantized.resize(n * 2);
     DecompressRVL((char*)decompressed.data(), (short*)quantized.data(), n);
