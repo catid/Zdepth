@@ -60,7 +60,7 @@ static const int kDepthHeaderBytes = 40;
     Words are stored in little-endian byte order.
 
     0: <Format Magic = 202 (1 byte)>
-    1: <Flags (1 byte)>
+    1: <Flags (1 byte: 3 bits reserved, 4 bits encode_mode, 1 bit keyframe)>
     2: <Frame Number (2 bytes)>
     4: <Width (2 bytes)>
     6: <Height (2 bytes)>
@@ -77,10 +77,12 @@ static const int kDepthHeaderBytes = 40;
 
     The compressed and uncompressed sizes are of packed data for Zstd.
 
-    Flags = 1 for I-frames and 0 for P-frames.
+    Flags:
+    keyframe bit = 1 for I-frames and 0 for P-frames.
     The P-frames are able to use predictors that reference the previous frame.
     The decoder keeps track of the previously decoded Frame Number and rejects
     frames that cannot be decoded due to a missing previous frame.
+    encode_mode bits: See EncodeMode.
 */
 
 // Size of a block for predictor selection purposes
@@ -204,17 +206,48 @@ uint16_t AzureKinectQuantizeDepth(uint16_t depth);
 // Reverse quantization back to original depth
 uint16_t AzureKinectDequantizeDepth(uint16_t quantized);
 
+// Out of range data are marked as zeros.
+// Representable data range is one bit smaller than the storage
+// bit depth per pixel because the data is represented internally as
+// signed numbers.
+enum class EncodeMode {
+  // Quantized within [200, 11840] mm. 12 bit/pixel
+  kAzureKinectQuantized = 0b0000,
+  // Not quantized within [1, 511] mm. 10 bit/pixel
+  kNotQuantized511mm = 0b0001,
+  // Not quantized within [1, 1023] mm. 11 bit/pixel
+  kNotQuantized1023mm = 0b0010,
+  // Not quantized within [1, 2047] mm. 12 bit/pixel
+  kNotQuantized2047mm = 0b0011,
+  // Not quantized within [1, 4095] mm. 13 bit/pixel
+  kNotQuantized4095mm = 0b0100,
+  // Not quantized within [1, 8191] mm. 14 bit/pixel
+  kNotQuantized8191mm = 0b0101,
+};
+
+static const int kEncodeModeBits = 4;
+static const int kEncodeModeMask = 0b1111;
+
+const char* EncodeModeString(EncodeMode value);
+
+// Unit: mm.
+// Depth values >= cutoff depth are invalid.
+// Returns 0 if mode is invalid.
+int GetCutoffDepth(EncodeMode mode);
+
 // Quantize depth for a whole image
 void QuantizeDepthImage(
     int width,
     int height,
     const uint16_t* depth,
-    std::vector<uint16_t>& quantized);
+    std::vector<uint16_t>& quantized,
+    EncodeMode mode = EncodeMode::kAzureKinectQuantized);
 void DequantizeDepthImage(
     int width,
     int height,
     const uint16_t* quantized,
-    std::vector<uint16_t>& depth);
+    std::vector<uint16_t>& depth,
+    EncodeMode mode = EncodeMode::kAzureKinectQuantized);
 
 
 //------------------------------------------------------------------------------
@@ -277,6 +310,13 @@ public:
         std::vector<uint8_t>& compressed,
         bool keyframe);
 
+    // Same as above, but insert a keyframe every `gop` frames.
+    DepthResult Compress(
+        int width,
+        int height,
+        const uint16_t* unquantized_depth,
+        std::vector<uint8_t>& compressed);
+
     // Decompress buffer to depth array.
     // Resulting depth buffer is row-first, stride=width*2 (no surprises).
     // Returns DepthResult::Success if original depth can be recovered
@@ -285,6 +325,10 @@ public:
         int& width,
         int& height,
         std::vector<uint16_t>& depth_out);
+
+    void set_gop(int value) { gop_ = value; }
+
+    void set_encode_mode(EncodeMode value) { encode_mode_ = value; }
 
 protected:
     // Depth values quantized for current and last frame
@@ -309,6 +353,8 @@ protected:
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
     std::vector<uint8_t> Packed;
 
+    int gop_ = 30;
+    EncodeMode encode_mode_ = EncodeMode::kAzureKinectQuantized;
 
     void CompressImage(
         int width,

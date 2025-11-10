@@ -70,12 +70,15 @@ target_include_directories(zdepth PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
 )
+set_property(TARGET zdepth PROPERTY CXX_STANDARD 17)
 
 # zdepth test application
 
 add_executable(zdepth_test tests/zdepth_test.cpp)
 target_link_libraries(zdepth_test PRIVATE zdepth)
 
+add_executable(zdepth_mode_test tests/zdepth_mode_test.cpp)
+target_link_libraries(zdepth_mode_test PRIVATE zdepth)
 
 ################################################################################
 # Install

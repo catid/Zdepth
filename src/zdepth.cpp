@@ -2,7 +2,8 @@
 
 #include "zdepth.hpp"
 #include <zstd.h> // Zstd
-#include <string.h> // memcpy
+#include <cstring> // memcpy
+#include <vector>
 
 namespace zdepth {
 
@@ -105,14 +106,30 @@ void QuantizeDepthImage(
     int width,
     int height,
     const uint16_t* depth,
-    std::vector<uint16_t>& quantized)
+    std::vector<uint16_t>& quantized,
+    EncodeMode mode)
 {
     const int n = width * height;
     quantized.resize(n);
     uint16_t* dest = quantized.data();
 
-    for (int i = 0; i < n; ++i) {
-        dest[i] = AzureKinectQuantizeDepth(depth[i]);
+    switch (mode) {
+        case EncodeMode::kAzureKinectQuantized:
+            for (int i = 0; i < n; ++i) {
+                dest[i] = AzureKinectQuantizeDepth(depth[i]);
+            }
+            break;
+        case EncodeMode::kNotQuantized511mm:
+        case EncodeMode::kNotQuantized1023mm:
+        case EncodeMode::kNotQuantized2047mm:
+        case EncodeMode::kNotQuantized4095mm:
+        case EncodeMode::kNotQuantized8191mm:
+            int cutoff_depth = GetCutoffDepth(mode);
+
+            for (int i = 0; i < n; ++i) {
+                dest[i] = depth[i] < cutoff_depth ? depth[i] : 0;
+            }
+            break;
     }
 }
 
@@ -120,14 +137,26 @@ void DequantizeDepthImage(
     int width,
     int height,
     const uint16_t* quantized,
-    std::vector<uint16_t>& depth)
+    std::vector<uint16_t>& depth,
+    EncodeMode mode)
 {
     const int n = width * height;
     depth.resize(n);
     uint16_t* dest = depth.data();
 
-    for (int i = 0; i < n; ++i) {
-        dest[i] = AzureKinectDequantizeDepth(quantized[i]);
+    switch (mode) {
+        case EncodeMode::kAzureKinectQuantized:
+            for (int i = 0; i < n; ++i) {
+                dest[i] = AzureKinectDequantizeDepth(quantized[i]);
+            }
+            break;
+        case EncodeMode::kNotQuantized511mm:
+        case EncodeMode::kNotQuantized1023mm:
+        case EncodeMode::kNotQuantized2047mm:
+        case EncodeMode::kNotQuantized4095mm:
+        case EncodeMode::kNotQuantized8191mm:
+            memcpy(dest, quantized, n * sizeof(uint16_t));
+            break;
     }
 }
 
@@ -324,6 +353,235 @@ void Unpack12(
 }
 
 
+int GetCutoffDepth(EncodeMode mode) {
+  switch (mode) {
+    case EncodeMode::kAzureKinectQuantized:
+      return 2048;
+    case EncodeMode::kNotQuantized511mm:
+      return 512;
+    case EncodeMode::kNotQuantized1023mm:
+      return 1024;
+    case EncodeMode::kNotQuantized2047mm:
+      return 2048;
+    case EncodeMode::kNotQuantized4095mm:
+      return 4096;
+    case EncodeMode::kNotQuantized8191mm:
+      return 8192;
+    default:
+      break;
+  }
+  return 0;
+}
+
+template <int bits_per_pixel = 12>
+class Packer {
+ public:
+  static_assert(8 < bits_per_pixel && bits_per_pixel <= 16);
+
+  static constexpr size_t GetPackedBytes(size_t num_unpacked_pixels) {
+    size_t num_packed_bits = num_unpacked_pixels * bits_per_pixel;
+    size_t num_packed_bytes = (num_packed_bits + 7) / 8;
+    return num_packed_bytes;
+  }
+
+  static constexpr size_t GetUnpackedPixels(size_t num_packed_bytes) {
+    size_t num_unpacked_bits = num_packed_bytes * 8;
+    size_t num_unpacked_pixels = num_unpacked_bits / bits_per_pixel;
+    return num_unpacked_pixels;
+  }
+
+  static void Pack(const std::vector<uint16_t>& unpacked, std::vector<uint8_t>& packed) {
+    size_t num_pixels = unpacked.size();
+    packed.resize(GetPackedBytes(num_pixels));
+
+    size_t packed0 = 0;
+    size_t packed1 = num_pixels;
+    uint64_t bitbuffer;
+
+    // Aligned packing
+    size_t aligned_chunk_size = num_pixels / kNumPixelsPerChunk * kNumPixelsPerChunk;
+    for (; packed0 < aligned_chunk_size; packed0 += kNumPixelsPerChunk) {
+      bitbuffer = 0;
+      for (int i = 0; i < kNumPixelsPerChunk; ++i) {
+        uint8_t high = unpacked[packed0 + i] >> kNumLowBits;
+        uint8_t low = unpacked[packed0 + i] & kLowMask;
+        packed[packed0 + i] = high;
+        bitbuffer |= static_cast<uint64_t>(low) << (kNumLowBits * i);
+      }
+
+      // Assumes bitbuffer is little-endian.
+      std::memcpy(&packed[packed1], &bitbuffer, kNumPixelsPerChunk * kNumLowBits / 8);
+      packed1 += kNumPixelsPerChunk * kNumLowBits / 8;
+    }
+
+    // Unaligned packing
+    bitbuffer = 0;
+    for (size_t i = 0; i < num_pixels - packed0; ++i) {
+      uint8_t high = unpacked[packed0 + i] >> kNumLowBits;
+      uint8_t low = unpacked[packed0 + i] & kLowMask;
+      packed[packed0 + i] = high;
+      bitbuffer |= static_cast<uint64_t>(low) << (kNumLowBits * i);
+    }
+
+    // Assumes bitbuffer is little-endian.
+    int num_unaligned_bytes = ((num_pixels - aligned_chunk_size) * kNumLowBits + 7) / 8;
+    std::memcpy(&packed[packed1], &bitbuffer, num_unaligned_bytes);
+  }
+
+  static void Unpack(const std::vector<uint8_t>& packed, std::vector<uint16_t>& unpacked) {
+    size_t num_pixels = GetUnpackedPixels(packed.size());
+    unpacked.resize(num_pixels);
+
+    size_t packed0 = 0;
+    size_t packed1 = num_pixels;
+    uint64_t bitbuffer;
+
+    // Aligned unpacking
+    size_t aligned_chunk_size = num_pixels / kNumPixelsPerChunk * kNumPixelsPerChunk;
+    for (; packed0 < aligned_chunk_size; packed0 += kNumPixelsPerChunk) {
+      // Assumes bitbuffer is little-endian.
+      bitbuffer = 0;
+      std::memcpy(&bitbuffer, &packed[packed1], kNumPixelsPerChunk * kNumLowBits / 8);
+      packed1 += kNumPixelsPerChunk * kNumLowBits / 8;
+
+      for (int i = 0; i < kNumPixelsPerChunk; ++i) {
+        uint8_t high = packed[packed0 + i];
+        uint8_t low = bitbuffer & kLowMask;
+        bitbuffer >>= kNumLowBits;
+        unpacked[packed0 + i] = (high << kNumLowBits) | low;
+      }
+    }
+
+    // Unaligned unpacking
+    // Assumes bitbuffer is little-endian.
+    bitbuffer = 0;
+    int num_unaligned_bytes = ((num_pixels - aligned_chunk_size) * kNumLowBits + 7) / 8;
+    std::memcpy(&bitbuffer, &packed[packed1], num_unaligned_bytes);
+
+    for (size_t i = 0; i < num_pixels - packed0; ++i) {
+      uint8_t high = packed[packed0 + i];
+      uint8_t low = bitbuffer & kLowMask;
+      bitbuffer >>= kNumLowBits;
+      unpacked[packed0 + i] = (high << kNumLowBits) | low;
+    }
+  }
+
+ private:
+  static constexpr int GetLcm() {
+    if constexpr (bits_per_pixel - 8 == 1) {
+      return 8;
+    } else if constexpr (bits_per_pixel - 8 == 2) {
+      return 4;
+    } else if constexpr (bits_per_pixel - 8 == 3) {
+      return 8;
+    } else if constexpr (bits_per_pixel - 8 == 4) {
+      return 2;
+    } else if constexpr (bits_per_pixel - 8 == 5) {
+      return 8;
+    } else if constexpr (bits_per_pixel - 8 == 6) {
+      return 4;
+    } else if constexpr (bits_per_pixel - 8 == 7) {
+      return 8;
+    } else if constexpr (bits_per_pixel - 8 == 8) {
+      return 1;
+    }
+    return 0;
+  }
+  static constexpr int kNumPixelsPerChunk = GetLcm();
+  static constexpr int kNumLowBits = bits_per_pixel - 8;
+  static constexpr int kLowMask = ((1 << kNumLowBits) - 1);
+
+  static constexpr bool ProveBijection(size_t num_unpacked_pixels) {
+    return num_unpacked_pixels == GetUnpackedPixels(GetPackedBytes(num_unpacked_pixels));
+  }
+
+  static constexpr bool ProveBijectionAll() {
+    for (size_t i = 0; i < bits_per_pixel * 8; ++i) {
+      if (!ProveBijection(i)) return false;
+    }
+    return true;
+  }
+  static_assert(ProveBijectionAll());
+};
+
+// Packer template instantiation
+template class Packer<10>;
+template class Packer<11>;
+template class Packer<12>;
+template class Packer<13>;
+template class Packer<14>;
+
+void Pack(EncodeMode mode, std::vector<uint16_t>& unpacked, std::vector<uint8_t>& packed) {
+  switch (mode) {
+    case EncodeMode::kAzureKinectQuantized:
+      Pad12(unpacked);
+      Pack12(unpacked, packed);
+      break;
+    case EncodeMode::kNotQuantized511mm:
+      Packer<10>::Pack(unpacked, packed);
+      break;
+    case EncodeMode::kNotQuantized1023mm:
+      Packer<11>::Pack(unpacked, packed);
+      break;
+    case EncodeMode::kNotQuantized2047mm:
+      Packer<12>::Pack(unpacked, packed);
+      break;
+    case EncodeMode::kNotQuantized4095mm:
+      Packer<13>::Pack(unpacked, packed);
+      break;
+    case EncodeMode::kNotQuantized8191mm:
+      Packer<14>::Pack(unpacked, packed);
+      break;
+    default:
+      break;
+  }
+}
+
+void Unpack(EncodeMode mode, const std::vector<uint8_t>& packed, std::vector<uint16_t>& unpacked) {
+  switch (mode) {
+    case EncodeMode::kAzureKinectQuantized:
+      Unpack12(packed, unpacked);
+      break;
+    case EncodeMode::kNotQuantized511mm:
+      Packer<10>::Unpack(packed, unpacked);
+      break;
+    case EncodeMode::kNotQuantized1023mm:
+      Packer<11>::Unpack(packed, unpacked);
+      break;
+    case EncodeMode::kNotQuantized2047mm:
+      Packer<12>::Unpack(packed, unpacked);
+      break;
+    case EncodeMode::kNotQuantized4095mm:
+      Packer<13>::Unpack(packed, unpacked);
+      break;
+    case EncodeMode::kNotQuantized8191mm:
+      Packer<14>::Unpack(packed, unpacked);
+      break;
+    default:
+      break;
+  }
+}
+
+const char* EncodeModeString(EncodeMode value) {
+  switch (value) {
+    case EncodeMode::kAzureKinectQuantized:
+      return "kinect";
+    case EncodeMode::kNotQuantized511mm:
+      return "511mm";
+    case EncodeMode::kNotQuantized1023mm:
+      return "1023mm";
+    case EncodeMode::kNotQuantized2047mm:
+      return "2047mm";
+    case EncodeMode::kNotQuantized4095mm:
+      return "4095mm";
+    case EncodeMode::kNotQuantized8191mm:
+      return "8191mm";
+    default:
+      break;
+  }
+  return "Unknown";
+}
+
 //------------------------------------------------------------------------------
 // DepthCompressor
 
@@ -346,7 +604,7 @@ DepthResult DepthCompressor::Compress(
     ++CompressedFrameNumber;
 
     // Quantize the depth image
-    QuantizeDepthImage(width, height, unquantized_depth, QuantizedDepth[CurrentFrameIndex]);
+    QuantizeDepthImage(width, height, unquantized_depth, QuantizedDepth[CurrentFrameIndex], encode_mode_);
 
     // Get depth for previous frame
     const uint16_t* depth = QuantizedDepth[CurrentFrameIndex].data();
@@ -363,13 +621,11 @@ DepthResult DepthCompressor::Compress(
 
     // Do Zstd compressions all together to keep the code cache hot:
 
-    Pad12(Surfaces);
-    Pack12(Surfaces, Packed);
+    Pack(encode_mode_, Surfaces, Packed);
     Surfaces_UncompressedBytes = static_cast<unsigned>( Packed.size() );
     ZstdCompress(Packed, SurfacesOut);
 
-    Pad12(Edges);
-    Pack12(Edges, Packed);
+    Pack(encode_mode_, Edges, Packed);
     Edges_UncompressedBytes = static_cast<unsigned>( Packed.size() );
     ZstdCompress(Packed, EdgesOut);
 
@@ -382,6 +638,12 @@ DepthResult DepthCompressor::Compress(
     WriteCompressedFile(width, height, keyframe, compressed);
 
     return DepthResult::Success;
+}
+
+DepthResult DepthCompressor::Compress(int width, int height, const uint16_t* unquantized_depth,
+                                      std::vector<uint8_t>& compressed) {
+    bool keyframe = (CompressedFrameNumber % gop_ == 0);
+    return Compress(width, height, unquantized_depth, compressed, keyframe);
 }
 
 void DepthCompressor::CompressImage(
@@ -550,6 +812,7 @@ void DepthCompressor::WriteCompressedFile(
     if (keyframe) {
         flags |= 1;
     }
+    flags |= (static_cast<int>(encode_mode_) & kEncodeModeMask) << 1;
     copy_dest[1] = flags;
 
     WriteU16_LE(copy_dest + 2, static_cast<uint16_t>( CompressedFrameNumber ));
@@ -589,6 +852,10 @@ DepthResult DepthCompressor::Decompress(
         return DepthResult::WrongFormat;
     }
     bool keyframe = (src[1] & 1) != 0;
+    EncodeMode encode_mode = static_cast<EncodeMode>((src[1] >> 1) & kEncodeModeMask);
+    if (GetCutoffDepth(encode_mode) == 0) {
+	return DepthResult::WrongFormat;
+    }
     const unsigned frame_number = ReadU16_LE(src + 2);
 
     if (!keyframe && frame_number != CompressedFrameNumber + 1) {
@@ -624,7 +891,7 @@ DepthResult DepthCompressor::Decompress(
     Surfaces_UncompressedBytes = ReadU32_LE(src + 32);
     const unsigned SurfacesCompressedBytes = ReadU32_LE(src + 36);
 
-    if (Blocks_UncompressedBytes < 2) {
+    if (Blocks_UncompressedBytes < 1) {
         return DepthResult::Corrupted;
     }
 
@@ -660,7 +927,7 @@ DepthResult DepthCompressor::Decompress(
     if (!success) {
         return DepthResult::Corrupted;
     }
-    Unpack12(Packed, Edges);
+    Unpack(encode_mode, Packed, Edges);
 
     success = ZstdDecompress(
         SurfacesData,
@@ -670,7 +937,7 @@ DepthResult DepthCompressor::Decompress(
     if (!success) {
         return DepthResult::Corrupted;
     }
-    Unpack12(Packed, Surfaces);
+    Unpack(encode_mode, Packed, Surfaces);
 
     success = ZstdDecompress(
         BlocksData,
@@ -691,7 +958,7 @@ DepthResult DepthCompressor::Decompress(
         return DepthResult::Corrupted;
     }
 
-    DequantizeDepthImage(width, height, depth, depth_out);
+    DequantizeDepthImage(width, height, depth, depth_out, encode_mode);
     return DepthResult::Success;
 }
 
