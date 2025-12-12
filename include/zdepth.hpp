@@ -213,14 +213,19 @@ uint16_t AzureKinectDequantizeDepth(uint16_t quantized);
 enum class EncodeMode {
   // Quantized within [200, 11840] mm. 12 bit/pixel
   kAzureKinectQuantized = 0b0000,
+
   // Not quantized within [1, 511] mm. 10 bit/pixel
   kNotQuantized511mm = 0b0001,
+
   // Not quantized within [1, 1023] mm. 11 bit/pixel
   kNotQuantized1023mm = 0b0010,
+
   // Not quantized within [1, 2047] mm. 12 bit/pixel
   kNotQuantized2047mm = 0b0011,
+
   // Not quantized within [1, 4095] mm. 13 bit/pixel
   kNotQuantized4095mm = 0b0100,
+
   // Not quantized within [1, 8191] mm. 14 bit/pixel
   kNotQuantized8191mm = 0b0101,
 };
@@ -353,7 +358,7 @@ protected:
     // Packs the 16-bit overruns into 12-bit values and apply Zstd
     std::vector<uint8_t> Packed;
 
-    int gop_ = 30;
+    int gop_ = 1;
     EncodeMode encode_mode_ = EncodeMode::kAzureKinectQuantized;
 
     void CompressImage(
