@@ -356,7 +356,7 @@ void Unpack12(
 int GetCutoffDepth(EncodeMode mode) {
   switch (mode) {
     case EncodeMode::kAzureKinectQuantized:
-      return 2048;
+      return 11840;
     case EncodeMode::kNotQuantized511mm:
       return 512;
     case EncodeMode::kNotQuantized1023mm:
